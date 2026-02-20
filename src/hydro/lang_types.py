@@ -1,10 +1,11 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from encodings.punycode import T
 from enum import Enum, auto
 import typing
 from builders import builder_stack, current_module, runtime
-from helpers import BOOL, CHAR, POINTER, INT, get_type_size, cmp_function
+from helpers import BOOL, CHAR, POINTER, INT, arith_function, get_type_size, cmp_function
 from llvmlite.ir import (
     CastInstr,
     Constant,
@@ -31,15 +32,17 @@ def get_type(trepr: TypeRepr) -> BaseMetatype:
         if isinstance(generic, list):
             generics.append(TupleMetatype(*[get_type(sub) for sub in generic]))
         else: 
-            generics.append(get_type(generic))
+            generics.append(get_type(generic) if isinstance(generic, TypeRepr) else generic)
     
+    logger.debug(f"Compiling {str_repr} ...")
     out = trepr.base.create_metatype(generics)
     type_db[str_repr] = out 
+    trepr.base.fill_metatype(out)
     return out
 
 
 class TypeRepr:
-    def __init__(self, base: type[ObjectType], generics: list[TypeRepr | list[TypeRepr]] = []) -> None:
+    def __init__(self, base: type[ObjectType], generics: list[TypeRepr | BaseMetatype | list[TypeRepr]] = []) -> None:
         self.base = base 
         self.generics = generics
 
@@ -47,6 +50,16 @@ class TypeRepr:
         generics = f"<{", ".join([str(t) for t in self.generics])}>" if self.generics else ""
         return f"{self.base.NAME}{generics}"
     
+
+@dataclass
+class MemberInfo:
+    typ: BaseMetatype
+    struct_index: int
+    private: bool = False 
+    const: bool = False
+    internal: bool = False
+    abstract: bool = False
+
 
 @dataclass
 class TypeHeader:
@@ -57,15 +70,14 @@ class TypeHeader:
     order defined in their respective dictionaries. 
     """
 
-    # TODO: Replace parameters and members with AnnotatedType wrapper.
-
     name: str
     generics: dict[str, BaseMetatype]
     inherits: list[BaseMetatype]
-    parameters: dict[str, BaseMetatype]
-    members: dict[str, BaseMetatype]
-    static_members: dict[str, ObjectType]
-    is_abstract: bool
+    parameters: dict[str, MemberInfo]
+    members: dict[str, MemberInfo] = {}
+    static_members: dict[str, ObjectType] = {}
+    is_abstract: bool = False
+    has_constructor: bool = True
 
 
 class ObjectType:
@@ -97,6 +109,7 @@ class ObjectType:
         self.name = dbg_name
         self.reference = reference
         self.typ = typ
+        self.members = self.typ.object_members
 
         # This ends up with a valid pointer to the variable, no matter
         # the method.
@@ -121,9 +134,6 @@ class ObjectType:
         else:
             self.value = value
 
-        #: A dictionary mapping a name to a type and an index.
-        self.members: dict[str, tuple[BaseMetatype, int]] = {}
-
     @property 
     def storage_type(self) -> Type:
         return self.typ.llvm_type.as_pointer() if self.IS_REFCOUNTED else self.typ.llvm_type
@@ -141,11 +151,11 @@ class ObjectType:
 
         builder = builder_stack[-1]
         builder.comment(f"Load value named '{name}' from '{self.name}'")
-        member_type, index = self.members[name]
+        member = self.members[name]
         assert name in self.members
-        internal_mem = self._get_index(index, into_name)
-        internal_ptr: CastInstr = builder.bitcast(internal_mem, member_type.llvm_type.as_pointer(), f"{into_name}_ptr")  # type: ignore
-        return member_type.bound.from_value(internal_ptr, member_type, reference, into_name)
+        internal_mem = self._get_index(member.struct_index, into_name)
+        internal_ptr: CastInstr = builder.bitcast(internal_mem, member.typ.llvm_type.as_pointer(), f"{into_name}_ptr")  # type: ignore
+        return member.typ.bound.from_value(internal_ptr, member.typ, reference, into_name)
 
     @staticmethod
     def create_metatype(generics: list[BaseMetatype]) -> BaseMetatype:
@@ -153,15 +163,19 @@ class ObjectType:
         header = TypeHeader("Object", {}, [], {}, {}, {}, False)
         return BaseMetatype(ObjectType, header)
     
+    @staticmethod 
+    def fill_metatype(typ: BaseMetatype) -> None:
+        pass
+    
     @staticmethod
     def get_initializer(metatype: BaseMetatype) -> BasicCallable:
         return ObjectType._initializer_builder(metatype)
     
     @staticmethod 
-    def _initializer_builder(metatype: BaseMetatype, member_builder: typing.Callable[[IRBuilder], list[Value]] = lambda x: []) -> BasicCallable:
+    def _initializer_builder(metatype: BaseMetatype, member_builder: typing.Callable[[IRBuilder, list[ObjectType]], list[Value]] = lambda builder, params: []) -> BasicCallable:
         logger.debug(f"Creating {metatype.header.name} initializer")
 
-        initializer_ir_type = FunctionType(POINTER, [param.llvm_type for param in metatype.header.parameters.values()])
+        initializer_ir_type = FunctionType(POINTER, [param.typ.llvm_type for param in metatype.header.parameters.values()])
         initializer_value = Function(current_module, initializer_ir_type, f"Object__init")
         initializer_type = get_type(TypeRepr(Callable, [[], TypeRepr(ObjectType)]))
         initializer = BasicCallable(initializer_value, initializer_type, [], get_type(TypeRepr(ObjectType)))
@@ -177,18 +191,15 @@ class ObjectType:
         new_ptr: Value = builder.bitcast(new_mem, metatype.llvm_type.as_pointer(), "new_ptr") # type: ignore
         as_object = metatype.bound.from_value(new_ptr, metatype)
 
+        parameters = [info.typ.bound.from_value(arg, info.typ) for arg, info in zip(initializer_value.args, metatype.header.parameters.values())]
+
         # TODO: Put all parameters into whatever scope system.
-
-        builder.comment("First, store all class parameters into the struct.")
-        member_index = 0
-        for arg in initializer_value.args:
-            field_ptr = builder.gep(new_ptr, [INT(0), INT(member_index)], name=f"field_ptr_{member_index}")
-            builder.store(arg, field_ptr)
-            member_index += 1
         
-        builder.comment("(not implemented) Initialize all member variables.")
-        members = member_builder(builder)
+        builder.comment("Initialize all member variables.")
+        members = member_builder(builder, parameters)
 
+        # TODO: Unnecessary now.
+        member_index = 0
         for member in members:
             field_ptr = builder.gep(new_ptr, [INT(0), INT(member_index)], name=f"field_ptr_{member_index}")
             builder.store(member, field_ptr)
@@ -252,9 +263,12 @@ class BaseMetatype(ObjectType):
         self.bound = bound
         self.header = header
         self.object_members = self.header.parameters | self.header.members
+        self.struct_index = len(self.object_members)
         self.static_members = self.header.static_members
         self.subclasses: list[BaseMetatype] = []
         self.generic_name = f"{self.name}<{", ".join(t.name for t in self.header.generics.values())}"
+        if self.header.has_constructor or self.header.is_abstract:
+            self.static_members["()"] = self.bound.get_initializer(self) 
 
     def validate(self, obj: ObjectType) -> bool:
         if isinstance(obj, self.bound):
@@ -268,12 +282,16 @@ class BaseMetatype(ObjectType):
         return name in self.object_members
     
     def add_parameter(self, name: str, typ: BaseMetatype) -> None:
-        self.header.parameters[name] = typ 
-        self.object_members[name] = typ
+        info = MemberInfo(typ, self.struct_index)
+        self.struct_index += 1
+        self.header.parameters[name] = info 
+        self.object_members[name] = info
     
-    def add_member(self, name: str, typ: BaseMetatype) -> None:
-        self.header.members[name] = typ 
-        self.object_members[name] = typ
+    def add_member(self, name: str, typ: BaseMetatype, private: bool = False, const: bool = False, internal: bool = False, abstract: bool = False) -> None:
+        info = MemberInfo(typ, self.struct_index, private, const, internal, abstract)
+        self.struct_index += 1
+        self.header.members[name] = info
+        self.object_members[name] = info
     
     def add_static(self, name: str, val: ObjectType) -> None:
         self.header.static_members[name] = val 
@@ -281,6 +299,15 @@ class BaseMetatype(ObjectType):
     
     def add_subclass(self, typ: BaseMetatype) -> None:
         self.subclasses.append(typ)
+    
+    def finalize(self) -> None:
+        members = list(self.object_members.values())
+        members.sort(key=lambda x: x.struct_index)
+        for i, member in enumerate(members):
+            assert i == member.struct_index
+        
+        # TODO: Internal types.
+        self.llvm_type.set_body(*[member.typ.llvm_type for member in members])
     
     @staticmethod
     def create_metatype(generics: list[BaseMetatype]) -> BaseMetatype:
@@ -293,24 +320,25 @@ class TupleMetatype(BaseMetatype):
     """
 
     NAME = "TupleType"
+    LLVM_TYPE = current_module.context.get_identified_type("TupleType")
 
     def __init__(self, *element_types: BaseMetatype) -> None:
         self.element_types = list(element_types)
         combined_type = current_module.context.get_identified_type(f"Tuple<{", ".join(t.name for t in element_types)}")
         combined_type.set_body(*[t.llvm_type for t in element_types])
 
-        mapped_types = {f"{i}": element for i, element in enumerate(element_types)}
+        mapped_generics = {f"{i}": element for i, element in enumerate(element_types)}
+        mapped_types = {f"{i}": MemberInfo(element, i, internal=True) for i, element in enumerate(element_types)}
 
         super().__init__(
             TupleType,
             TypeHeader(
                 "Tuple",
-                mapped_types,
+                mapped_generics,
                 [get_type(TypeRepr(ObjectType))],
                 mapped_types,
                 {},
                 {},
-                False
             )
         )
 
@@ -328,12 +356,6 @@ class BoolType(ObjectType):
         dbg_name: str = "unnamed_object",
     ) -> None:
         super().__init__(value, typ, allocate, reference, dbg_name)
-
-        cmp_type = get_type(TypeRepr(InstanceCallable, [TypeRepr(BoolType), [TypeRepr(BoolType)], TypeRepr(BoolType)]))
-        self.members = {
-            "==": (cmp_type, 0),
-            "!=": (cmp_type, 1)
-        }
     
     @staticmethod
     def create_metatype(generics: list[BaseMetatype]) -> BaseMetatype:
@@ -346,26 +368,33 @@ class BoolType(ObjectType):
                 {},
                 {},
                 {},
-                False
+                has_constructor=False
             )
         )
     
     @staticmethod 
     def fill_metatype(typ: BaseMetatype) -> None:
         cmp_type = get_type(TypeRepr(InstanceCallable, [TypeRepr(BoolType), [TypeRepr(BoolType)], TypeRepr(BoolType)]))
-        typ.add_parameter("value", typ)
+        typ.add_member("value", typ, internal=True)
         typ.add_member("==", cmp_type)
         typ.add_member("!=", cmp_type)
     
     @staticmethod 
-    def member_builder(builder: IRBuilder) -> list[Value]:
+    def member_builder(builder: IRBuilder, params: list[ObjectType]) -> list[Value]:
+        assert len(params) == 1
+        arg = params[0]
+        assert isinstance(arg, BoolType)
+
+        raw_ptr = builder.gep(arg, [INT(0), INT(0)], name="raw_ptr")
+        raw = builder.load(raw_ptr, "raw")
+
         _, eq = cmp_function(current_module, "Bool", "==", BOOL, BOOL)
         _, neq = cmp_function(current_module, "Bool", "!=", BOOL, BOOL)
 
         eq_ptr: Value = builder.bitcast(eq, POINTER, "eq_ptr") # type: ignore
         neq_ptr: Value = builder.bitcast(neq, POINTER, "neq_ptr") # type: ignore
 
-        return [BOOL(0), eq_ptr, neq_ptr]
+        return [raw, eq_ptr, neq_ptr]
     
     @staticmethod
     def get_initializer(metatype: BaseMetatype) -> BasicCallable:
@@ -386,12 +415,20 @@ class IntType(ObjectType):
     ) -> None:
         super().__init__(value, typ, allocate, reference, dbg_name)
 
-        self.eq_type, self.eq = cmp_function(current_module, "Int", "==", INT, INT)
-        self.neq_type, self.neq = cmp_function(current_module, "Int", "!=", INT, INT)
-        self.less_type, self.less = cmp_function(current_module, "Int", "<", INT, INT)
-        self.greater_type, self.greater = cmp_function(current_module, "Int", ">", INT, INT)
-        self.leq_type, self.leq = cmp_function(current_module, "Int", "<=", INT, INT)
-        self.geq_type, self.geq = cmp_function(current_module, "Int", ">=", INT, INT)
+        cmp_type = get_type(TypeRepr(InstanceCallable, [TypeRepr(IntType), [TypeRepr(IntType)], TypeRepr(BoolType)]))
+        arith_type = get_type(TypeRepr(InstanceCallable, [TypeRepr(IntType), [TypeRepr(IntType)], TypeRepr(IntType)]))
+        self.members = {
+            "==": (cmp_type, 1),
+            "!=": (cmp_type, 2),
+            "<": (cmp_type, 3),
+            ">": (cmp_type, 4),
+            "<=": (cmp_type, 5),
+            ">=": (cmp_type, 6),
+            "+": (arith_type, 7),
+            "-": (arith_type, 8),
+            "*": (arith_type, 9),
+            "/": (arith_type, 10),
+        }
     
     @staticmethod
     def create_metatype(generics: list[BaseMetatype]) -> BaseMetatype:
@@ -404,28 +441,63 @@ class IntType(ObjectType):
                 {},
                 {},
                 {},
-                False
+                has_constructor=False
             )
         )
     
     @staticmethod 
     def fill_metatype(typ: BaseMetatype) -> None:
-        cmp_type = get_type(TypeRepr(InstanceCallable, [TypeRepr(IntType), [TypeRepr(IntType)], TypeRepr(IntType)]))
+        cmp_type = get_type(TypeRepr(InstanceCallable, [TypeRepr(IntType), [TypeRepr(IntType)], TypeRepr(BoolType)]))
+        arith_type = get_type(TypeRepr(InstanceCallable, [TypeRepr(IntType), [TypeRepr(IntType)], TypeRepr(IntType)]))
         typ.add_parameter("value", typ)
         typ.add_member("==", cmp_type)
         typ.add_member("!=", cmp_type)
+        typ.add_member("<", cmp_type)
+        typ.add_member(">", cmp_type)
+        typ.add_member("<=", cmp_type)
+        typ.add_member(">=", cmp_type)
+        typ.add_member("+", arith_type)
+        typ.add_member("-", arith_type)
+        typ.add_member("*", arith_type)
+        typ.add_member("/", arith_type)
         # TODO: Rest of operators.
     
     @staticmethod 
-    def member_builder(builder: IRBuilder) -> list[Value]:
-        _, eq = cmp_function(current_module, "Int", "==", INT, INT)
-        _, neq = cmp_function(current_module, "Int", "!=", INT, INT)
+    def member_builder(builder: IRBuilder, params: list[ObjectType]) -> list[Value]:
+        assert len(params) == 1
+        arg = params[0]
+        assert isinstance(arg, BoolType)
 
-        # TODO: Rest of operators
+        raw_ptr = builder.gep(arg, [INT(0), INT(0)], name="raw_ptr")
+        raw = builder.load(raw_ptr, "raw")
+
+        builder.comment("Integer operator functions:")
+
+        eq_type, eq = cmp_function(current_module, "Int", "==", INT, INT)
+        neq_type, neq = cmp_function(current_module, "Int", "!=", INT, INT)
+        less_type, less = cmp_function(current_module, "Int", "<", INT, INT)
+        greater_type, greater = cmp_function(current_module, "Int", ">", INT, INT)
+        leq_type, leq = cmp_function(current_module, "Int", "<=", INT, INT)
+        geq_type, geq = cmp_function(current_module, "Int", ">=", INT, INT)
+
+        # TODO: Overload for unary minus.
+        add_type, add = arith_function(current_module, "Int", "+", lambda builder, lhs, rhs: builder.add(lhs, rhs, "arith_res"), INT, INT, INT) # type: ignore
+        sub_type, sub = arith_function(current_module, "Int", "-", lambda builder, lhs, rhs: builder.sub(lhs, rhs, "arith_res"), INT, INT, INT) # type: ignore
+        mul_type, mul = arith_function(current_module, "Int", "*", lambda builder, lhs, rhs: builder.mul(lhs, rhs, "arith_res"), INT, INT, INT) # type: ignore
+        div_type, div = arith_function(current_module, "Int", "/", lambda builder, lhs, rhs: builder.div(lhs, rhs, "arith_res"), INT, INT, INT) # type: ignore
+
         eq_ptr: Value = builder.bitcast(eq, POINTER, "eq_ptr") # type: ignore
         neq_ptr: Value = builder.bitcast(neq, POINTER, "neq_ptr") # type: ignore
+        less_ptr: Value = builder.bitcast(less, POINTER, "less_ptr") # type: ignore
+        greater_ptr: Value = builder.bitcast(greater, POINTER, "greater_ptr") # type: ignore
+        leq_ptr: Value = builder.bitcast(leq, POINTER, "leq_ptr") # type: ignore
+        geq_ptr: Value = builder.bitcast(geq, POINTER, "geq_ptr") # type: ignore
+        add_ptr: Value = builder.bitcast(add, POINTER, "add_ptr") # type: ignore
+        sub_ptr: Value = builder.bitcast(sub, POINTER, "add_ptr") # type: ignore
+        mul_ptr: Value = builder.bitcast(mul, POINTER, "add_ptr") # type: ignore
+        div_ptr: Value = builder.bitcast(div, POINTER, "add_ptr") # type: ignore
 
-        return [INT(0), eq_ptr, neq_ptr]
+        return [raw, eq_ptr, neq_ptr, less_ptr, greater_ptr, leq_ptr, geq_ptr, add_ptr, sub_ptr, mul_ptr, div_ptr]
     
     @staticmethod
     def get_initializer(metatype: BaseMetatype) -> BasicCallable:
@@ -479,8 +551,29 @@ class Callable(ObjectType, ABC):
     def create_metatype(generics: list[BaseMetatype]) -> BaseMetatype:
         assert len(generics) == 2
         assert isinstance(generics[0], TupleMetatype)
-        llvm_type = current_module.context.get_identified_type("Callable")
-        return BaseMetatype("Callable", Callable, llvm_type, True, generics, [get_type(TypeRepr(ObjectType))])
+        return BaseMetatype(
+            Callable, 
+            TypeHeader(
+                "Callable",
+                {
+                    "Params": generics[0],
+                    "Returns": generics[1],
+                },
+                [get_type(TypeRepr(ObjectType))],
+                {},
+                {},
+                {},
+                is_abstract=True,
+                has_constructor=False
+            )
+        )
+    
+    @staticmethod 
+    def fill_metatype(typ: BaseMetatype) -> None:
+        typ.add_member("value", typ, internal=True)
+
+        call_type = get_type(TypeRepr(InstanceCallable, [TypeRepr(Callable), typ.header.generics["Params"], typ.header.generics["Returns"]]))
+        typ.add_member("call", call_type, abstract=True)
 
 
 class BasicCallable(Callable):
@@ -536,8 +629,8 @@ class BasicCallable(Callable):
     def from_value(value: Value, val_type: BaseMetatype, reference: bool = False, name: str = "unnamed_callable") -> ObjectType:
         assert isinstance(value, Function)
         assert issubclass(val_type.bound, BasicCallable)
-        assert len(val_type.generics) == 2
-        params, returns = val_type.generics
+        params = val_type.header.generics["Params"]
+        returns = val_type.header.generics["Returns"]
         assert isinstance(params, TupleMetatype)
         return BasicCallable(value, val_type, params.element_types, returns, False, reference, name)
     
@@ -545,9 +638,30 @@ class BasicCallable(Callable):
     def create_metatype(generics: list[BaseMetatype]) -> BaseMetatype:
         assert len(generics) == 2
         assert isinstance(generics[0], TupleMetatype)
-        llvm_type = current_module.context.get_identified_type("BasicCallable")
-        llvm_type.set_body(POINTER)
-        return BaseMetatype("BasicCallable", BasicCallable, llvm_type, False, generics, [get_type(TypeRepr(Callable))])
+        # llvm_type = current_module.context.get_identified_type("BasicCallable")
+        # llvm_type.set_body(POINTER)
+        return BaseMetatype(
+            BasicCallable,
+            TypeHeader(
+                "BasicCallable",
+                {
+                    "Params": generics[0],
+                    "Returns": generics[1],
+                },
+                [get_type(TypeRepr(Callable))],
+                {},
+                {},
+                {},
+                has_constructor=False
+            )
+        )
+    
+    @staticmethod 
+    def fill_metatype(typ: BaseMetatype) -> None:
+        typ.add_member("value", typ, internal=True)
+
+        call_type = get_type(TypeRepr(InstanceCallable, [TypeRepr(BasicCallable), typ.header.generics["Params"], typ.header.generics["Returns"]]))
+        typ.add_member("call", call_type)
 
 
 class InstanceCallable(BasicCallable):
@@ -597,8 +711,8 @@ class InstanceCallable(BasicCallable):
     def from_value(value: Value, val_type: BaseMetatype, reference: bool = False, name: str = "unnamed_callable") -> ObjectType:
         assert isinstance(value, Function)
         assert issubclass(val_type.bound, InstanceCallable)
-        assert len(val_type.generics) == 2
-        params, returns = val_type.generics
+        params = val_type.header.generics["Params"]
+        returns = val_type.header.generics["Returns"]
         assert isinstance(params, TupleMetatype)
         assert len(params.element_types) == 1
         instance = params.element_types[0]
@@ -609,11 +723,35 @@ class InstanceCallable(BasicCallable):
     def create_metatype(generics: list[BaseMetatype]) -> BaseMetatype:
         assert len(generics) == 3
         assert isinstance(generics[1], TupleMetatype)
-        llvm_type = current_module.context.get_identified_type("InstanceCallable")
-        llvm_type.set_body(POINTER)
-        return BaseMetatype("InstanceCallable", InstanceCallable, llvm_type, False, generics, [get_type(TypeRepr(BasicCallable))])
+        # llvm_type = current_module.context.get_identified_type("InstanceCallable")
+        # llvm_type.set_body(POINTER)
+        return BaseMetatype(
+            InstanceCallable,
+            TypeHeader(
+                "InstanceCallable",
+                {
+                    "On": generics[0],
+                    "Params": generics[1],
+                    "Returns": generics[2],
+                },
+                [get_type(TypeRepr(BasicCallable))],
+                {},
+                {},
+                {},
+                has_constructor=False
+            )
+        )
+    
+    # TODO: This should probably be able to bind the instance.
+    @staticmethod 
+    def fill_metatype(typ: BaseMetatype) -> None:
+        typ.add_member("value", typ, internal=True)
+
+        call_type = get_type(TypeRepr(InstanceCallable, [TypeRepr(BasicCallable), typ.header.generics["Params"], typ.header.generics["Returns"]]))
+        typ.add_member("call", call_type)
 
 
+# TODO: AnonymousCallable needs some way to store bound_values that probably isn't generics (although that wouldn't actually be that bad)
 class AnonymousCallable(BasicCallable):
     NAME = "AnonymousCallable"
 
@@ -630,9 +768,8 @@ class AnonymousCallable(BasicCallable):
     ) -> None:
         super().__init__(value, typ, params, returns, allocate, reference, dbg_name, [POINTER(None)])
 
-        struct_type = LiteralStructType([val.storage_type for val in bound_values])
+        # struct_type = LiteralStructType([val.storage_type for val in bound_values])
 
-        # TODO: Use TupleType here.
         # builder = builder_stack[-1]
         # builder.comment(f"Transferring bound values to the struct for {dbg_name} anonymous lambda.")
         # struct_ptr = builder.alloca(struct_type, name=f"{dbg_name}_bindings")
@@ -640,14 +777,37 @@ class AnonymousCallable(BasicCallable):
         #     field_ptr = builder.gep(struct_ptr, [INT(0), INT(i)])
         #     builder.store(binding.value, field_ptr)
     
+    # TODO: from_value for AnonymousCallable
+    
     @staticmethod
     def create_metatype(generics: list[BaseMetatype]) -> BaseMetatype:
         assert len(generics) == 2
         assert isinstance(generics[0], TupleMetatype)
-        llvm_type = current_module.context.get_identified_type("AnonymousCallable")
-        llvm_type.set_body(POINTER, POINTER)
-        return BaseMetatype("AnonymousCallable", AnonymousCallable, llvm_type, False, generics, [get_type(TypeRepr(BasicCallable))])
-        
+        # llvm_type = current_module.context.get_identified_type("AnonymousCallable")
+        # llvm_type.set_body(POINTER, POINTER)
+        return BaseMetatype(
+            AnonymousCallable,
+            TypeHeader(
+                "AnonymousCallable",
+                {
+                    "Params": generics[0],
+                    "Returns": generics[1],
+                },
+                [get_type(TypeRepr(BasicCallable))],
+                {},
+                {},
+                {},
+                has_constructor=False
+            )
+        )
+    
+    # TODO: This should probably be able to bind the instance.
+    @staticmethod 
+    def fill_metatype(typ: BaseMetatype) -> None:
+        typ.add_member("value", typ, internal=True)
+
+        call_type = get_type(TypeRepr(InstanceCallable, [TypeRepr(BasicCallable), typ.header.generics["Params"], typ.header.generics["Returns"]]))
+        typ.add_member("call", call_type)
 
 
 class CallableGroup:

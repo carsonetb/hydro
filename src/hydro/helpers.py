@@ -23,7 +23,7 @@ def cmp_function(module: ir.Module, class_name: str, cmpop: str, lhs: ir.Type, r
     return (cmp_type, cmp)
 
 
-def arith_function(module: ir.Module, class_name: str, name: str, generator: Callable, lhs: ir.Type, rhs: ir.Type, ret: ir.Type) -> tuple[ir.FunctionType, ir.Function]:
+def arith_function(module: ir.Module, class_name: str, name: str, generator: Callable[[ir.IRBuilder, ir.Value, ir.Value], ir.Value], lhs: ir.Type, rhs: ir.Type, ret: ir.Type) -> tuple[ir.FunctionType, ir.Function]:
     arith_type = ir.FunctionType(ret, [lhs, rhs])
     arith = ir.Function(module, arith_type, f"{class_name}__{name}")
     block = arith.append_basic_block("entry")
