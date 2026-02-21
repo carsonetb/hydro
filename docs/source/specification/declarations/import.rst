@@ -17,13 +17,16 @@ keyword. After that, a few things are valid:
   package path with each directory name seperated by a ``.`` symbol, and finally
   the name of the module.
 
-Being a top-level declaration, ``import`` does not require a semicolon
-to mark the end of the line.
+Internal 
+--------
 
 When a module is imported, a static ``Module`` instance is created with 
 the same name as the module. It contains members, similar to static 
 members of a ``Type``, which represent the internal variables, classes,
 and functions which are defined in the module. 
+
+Example 
+-------
 
 The result is such that if a module called ``adder`` is created like so:
 
@@ -37,8 +40,34 @@ In a ``main`` module it can be imported:
 
 .. code-block:: c
 
-    import adder
+    import adder;
 
-    fn main() -> int = {
+    fn main = {
         print(adder.add(2, 3)) // '5'
     }
+
+AST for ``import`` 
+------------------
+
+.. code-block::
+
+    importDecl = 'import' IDENTIFIER ( '.' IDENTIFIER )* ';'
+
+Internal Representation
+-----------------------
+
+- path: ``list[str]``
+
+Errors 
+------
+
+Syntax
+++++++
+
+- ERR00000: "Expected identifier after 'import' keyword."
+- ERR00001: "Expected '.' or ';' after identifier in 'import' keyword."
+
+Compile 
++++++++
+
+- ERR10000: "Invalid import path '{path}'."

@@ -19,3 +19,4 @@ declarations cannot be created.
     variables 
     functions 
     classes
+    annotations
