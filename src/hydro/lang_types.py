@@ -1,8 +1,10 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
+from copy import copy, deepcopy
 from dataclasses import dataclass
 from encodings.punycode import T
 from enum import Enum, auto
+from typing import cast
 import typing
 from builders import builder_stack, current_module, runtime
 from helpers import BOOL, CHAR, POINTER, INT, arith_function, get_type_size, cmp_function
@@ -16,6 +18,8 @@ from llvmlite.ir import (
     LiteralStructType,
     Value,
     Type,
+    GlobalVariable,
+    ArrayType
 )
 from loguru import logger
 
@@ -191,6 +195,13 @@ class ObjectType:
         new_ptr: Value = builder.bitcast(new_mem, metatype.llvm_type.as_pointer(), "new_ptr") # type: ignore
         as_object = metatype.bound.from_value(new_ptr, metatype)
 
+        builder.comment("Store vptr constants into memory.")
+        for base in metatype.base_classes:
+            vptr_path = [0] + metatype.index_paths[base.name] + [0]
+            vptr_ptr = builder.gep(new_ptr, [INT(i) for i in vptr_path])
+            vptr = metatype.get_vptr_constant(base.name)
+            builder.store(vptr, vptr_ptr)
+
         parameters = [info.typ.bound.from_value(arg, info.typ) for arg, info in zip(initializer_value.args, metatype.header.parameters.values())]
 
         # TODO: Put all parameters into whatever scope system.
@@ -231,6 +242,14 @@ class ObjectType:
         return builder.gep(self.value, indices, name=f"{name}_mem")
 
 
+@dataclass
+class VTableEntry:
+    name: str
+    obj: InstanceCallable | None
+    abstract: bool
+    virtual: bool 
+
+
 class BaseMetatype(ObjectType):
     """
     A Metatype is an Object representing a type. For example, if you
@@ -262,13 +281,38 @@ class BaseMetatype(ObjectType):
 
         self.bound = bound
         self.header = header
-        self.object_members = self.header.parameters | self.header.members
-        self.struct_index = len(self.object_members)
         self.static_members = self.header.static_members
         self.subclasses: list[BaseMetatype] = []
         self.generic_name = f"{self.name}<{", ".join(t.name for t in self.header.generics.values())}"
         if self.header.has_constructor or self.header.is_abstract:
             self.static_members["()"] = self.bound.get_initializer(self) 
+        
+        self.object_members: dict[str, MemberInfo] = {}
+        self.struct_index = 0
+
+        self.is_root_class = len(self.header.inherits) == 0
+
+        self.base_classes: list[BaseMetatype] = []
+        if self.is_root_class:
+            self.base_classes = [self]
+        else:
+            for inherits in self.header.inherits:
+                self.base_classes += inherits.base_classes
+
+        self.primary_vtbale: list[VTableEntry] = []
+        self.vtables: dict[str, tuple[list[VTableEntry], BaseMetatype]] = {}
+        if self.is_root_class:
+            self.vtables[self.name] = (self.primary_vtbale, self)
+        else:
+            main_inherits = self.header.inherits[0]
+            self.primary_vtbale = deepcopy(main_inherits.primary_vtbale)
+
+            for inherits in self.header.inherits:
+                self.vtables |= deepcopy(inherits.vtables)
+
+        self.index_paths: dict[str, list[int]] = {base_class.name: self._parent_path(self, base_class.name) for base_class in self.base_classes} # type: ignore
+        
+        self.vtable_global: GlobalVariable | None = None
 
     def validate(self, obj: ObjectType) -> bool:
         if isinstance(obj, self.bound):
@@ -293,6 +337,23 @@ class BaseMetatype(ObjectType):
         self.header.members[name] = info
         self.object_members[name] = info
     
+    def add_virtual(self, name: str, meth: InstanceCallable | None, virtual: bool = False, abstract: bool = False, override: bool = False) -> None:
+        assert virtual or abstract or override
+        assert (meth is None and abstract) or (meth is not None and not abstract)
+
+        entry = VTableEntry(name, meth, abstract, virtual)
+
+        if abstract:
+            assert not (virtual or override)
+            self.primary_vtbale.append(entry)
+        elif override:
+            typ, index = self._search_vtables(name)
+            super_entry = self.vtables[typ][0][index]
+            assert super_entry.virtual or super_entry.abstract
+            self.vtables[typ][0][index] = entry
+        elif virtual:
+            self.primary_vtbale.append(entry)
+    
     def add_static(self, name: str, val: ObjectType) -> None:
         self.header.static_members[name] = val 
         self.static_members[name] = val
@@ -301,17 +362,91 @@ class BaseMetatype(ObjectType):
         self.subclasses.append(typ)
     
     def finalize(self) -> None:
-        members = list(self.object_members.values())
-        members.sort(key=lambda x: x.struct_index)
-        for i, member in enumerate(members):
-            assert i == member.struct_index
+        struct = self._generate_struct()
+
+        # for name, (vtable, typ) in self.vtables.items():
+        #     table_typ = ArrayType(POINTER, len(vtable))
+        #     self.table_val = GlobalVariable(current_module, table_typ, f"vtable_{self.name}__{name}")
+        #     self.table_val.initializer = table_typ([cast(InstanceCallable, entry.obj).function_pointer for entry in vtable]) # type: ignore
+        #     self.internal_struct.append(table_typ)
+
+        # TODO: Deadly diamond of death
+
+        # Generate vtable global (doesn't effect struct)
+        vtable_struct: list[ArrayType] = []
+        vtable_values: list[Value] = []
+        for typ in self.base_classes:
+            this_vtable, _ = self.vtables[typ.name]
+            this_typ = ArrayType(POINTER, len(this_vtable))
+            vtable_struct.append(this_typ)
+            this_ptrs: list[Value] = []
+            for entry in this_vtable:
+                assert entry.obj is not None 
+                this_ptrs.append(entry.obj.function_pointer)
+            this_value = this_typ(this_ptrs)
+            vtable_values.append(this_value)
         
-        # TODO: Internal types.
-        self.llvm_type.set_body(*[member.typ.llvm_type for member in members])
+        vtable_group_type = LiteralStructType(vtable_struct)
+        vtable_group = vtable_group_type(vtable_values)
+        self.vtable_global = GlobalVariable(current_module, vtable_group_type, name=f"vtable__{self.name}")
+        self.vtable_global.global_constant = True
+        self.vtable_global.initializer = vtable_group # type: ignore
+        
+        self.llvm_type.set_body(struct)
+    
+    def get_vptr_constant(self, type_name: str) -> Value:
+        builder = builder_stack[-1]
+        for i, inherits in enumerate(self.header.inherits):
+            if inherits.name == type_name:
+                return builder.gep(self.vtable_global, [INT(0), INT(i)])
+        assert False
     
     @staticmethod
     def create_metatype(generics: list[BaseMetatype]) -> BaseMetatype:
         raise RuntimeError
+    
+    def _search_vtables(self, name: str) -> tuple[str, int]:
+        for typ, (vtable, _) in self.vtables.items():
+            for i, entry in enumerate(vtable):
+                if entry.name == name:
+                    return (typ, i)
+        assert False
+
+    def _generate_struct(self) -> list[Type]:
+        out: list[Type] = []
+
+        struct_index = 0
+        if len(self.header.inherits) > 0:
+            for inherits in self.header.inherits:
+                out.append(inherits.llvm_type)
+                struct_index += 1
+        else:
+            out.append(POINTER) # vptr
+            struct_index += 1
+        
+        prefix_index = struct_index
+        
+        members = list(self.object_members.values())
+        members.sort(key=lambda x: x.struct_index)
+        for member in members:
+            member.struct_index += prefix_index
+            out.append(member.typ.llvm_type)
+        
+        return out
+    
+    @staticmethod
+    def _parent_path(current: BaseMetatype, target_name: str) -> list[int] | None:
+        if current.name == target_name:
+            return []
+        
+        # Because all the inherited classes are at the start of the 
+        # struct, we can literally just use the index.
+        for i, inherits in enumerate(current.header.inherits):
+            path_rest = BaseMetatype._parent_path(inherits, target_name)
+            if path_rest is not None:
+                return [i] + path_rest
+
+        return None
     
 
 class TupleMetatype(BaseMetatype):
@@ -599,9 +734,9 @@ class BasicCallable(Callable):
     ) -> None:
         builder = builder_stack[-1]
         builder.comment("Cast function to pointer, store.")
-        function_memory = builder.bitcast(value, POINTER)
+        self.function_pointer: Value = builder.bitcast(value, POINTER) # type: ignore
 
-        super().__init__(typ.llvm_type([function_memory] + extra_struct_args), typ, allocate, reference, dbg_name)
+        super().__init__(typ.llvm_type([self.function_pointer] + extra_struct_args), typ, allocate, reference, dbg_name)
         self.params = params
         self.returns = returns
 

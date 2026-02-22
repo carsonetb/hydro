@@ -9,7 +9,7 @@ LONG = ir.IntType(64)
 FLOAT = ir.FloatType()
 DOUBLE = ir.DoubleType()
 VOID = ir.VoidType()
-POINTER = ir.IntType(8).as_pointer()
+POINTER = ir.PointerType()
 NULL: ir.Constant = POINTER(None)
 
 
