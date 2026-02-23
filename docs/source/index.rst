@@ -17,3 +17,4 @@ documentation for details.
    :caption: Specification
 
    specification/declarations/index
+   specification/grammar

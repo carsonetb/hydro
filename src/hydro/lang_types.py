@@ -723,20 +723,25 @@ class BasicCallable(Callable):
 
     def __init__(
         self,
-        value: Function,
+        value: Value | Function,
         typ: BaseMetatype,
         params: list[BaseMetatype],
         returns: BaseMetatype,
+        function_index: int = 0,
         allocate: bool = True,
         reference: bool = False,
-        dbg_name: str = "unnamed_callable",
-        extra_struct_args: list[Value] = []
+        dbg_name: str = "unnamed_callable"
     ) -> None:
         builder = builder_stack[-1]
+        if not isinstance(value, Function):
+            function_value = builder.extract_value(typ, function_index, "function_value")
+        else:
+            function_value = value
         builder.comment("Cast function to pointer, store.")
-        self.function_pointer: Value = builder.bitcast(value, POINTER) # type: ignore
+        self.function_pointer: Value = builder.bitcast(function_value, POINTER, "function_ptr") # type: ignore
 
-        super().__init__(typ.llvm_type([self.function_pointer] + extra_struct_args), typ, allocate, reference, dbg_name)
+        # TODO: Weird, probably should be refactored.
+        super().__init__(typ.llvm_type([value]) if isinstance(value, Function) else value, typ, allocate, reference, dbg_name)
         self.params = params
         self.returns = returns
 
@@ -767,7 +772,7 @@ class BasicCallable(Callable):
         params = val_type.header.generics["Params"]
         returns = val_type.header.generics["Returns"]
         assert isinstance(params, TupleMetatype)
-        return BasicCallable(value, val_type, params.element_types, returns, False, reference, name)
+        return BasicCallable(value, val_type, params.element_types, returns, 0, False, reference, name)
     
     @staticmethod
     def create_metatype(generics: list[BaseMetatype]) -> BaseMetatype:
@@ -807,6 +812,8 @@ class InstanceCallable(BasicCallable):
     """
 
     class Flags(Enum):
+        OVERRIDE = auto()
+        VIRTUAL = auto()
         ABSTRACT = auto()
         PRIVATE = auto()
         CONST = auto()
@@ -818,7 +825,7 @@ class InstanceCallable(BasicCallable):
         self,
         value: Function,
         typ: BaseMetatype,
-        instance: BaseMetatype,
+        instance: ObjectType,
         params: list[BaseMetatype],
         returns: BaseMetatype,
         flags: set[Flags],
@@ -826,7 +833,11 @@ class InstanceCallable(BasicCallable):
         reference: bool = False,
         dbg_name: str = "unnamed_callable",
     ) -> None:
-        super().__init__(value, typ, [instance] + params, returns, allocate, reference, dbg_name)
+        # TODO: Might need to convert to POINTER?
+        # TODO: Load the function from the vtable if virtual.
+        struct = typ.llvm_type([instance.value, value])
+
+        super().__init__(struct, typ, params, returns, 1, allocate, reference, dbg_name)
         self.instance = instance
         self.flags = flags
 
@@ -839,7 +850,7 @@ class InstanceCallable(BasicCallable):
         assert not self.Flags.ABSTRACT in self.flags
         assert len(arguments) > 0
         on = arguments[0]
-        assert self.instance.validate(on)
+        assert self.instance.typ.validate(on)
         return super().call(arguments, reference, var_name)
     
     @staticmethod
@@ -901,7 +912,7 @@ class AnonymousCallable(BasicCallable):
         reference: bool = False,
         dbg_name: str = "unnamed_callable",
     ) -> None:
-        super().__init__(value, typ, params, returns, allocate, reference, dbg_name, [POINTER(None)])
+        super().__init__(value, typ, params, returns, 0, allocate, reference, dbg_name)
 
         # struct_type = LiteralStructType([val.storage_type for val in bound_values])
 

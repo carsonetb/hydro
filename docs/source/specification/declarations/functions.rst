@@ -8,7 +8,9 @@ level function.
 Function AST 
 ------------
 
-annotation* 'fn' IDENTIFIER generics? ( '(' parameters ')' )? ( '->' type )? block
+.. code-block::
+
+    function = annotation* 'fn' IDENTIFIER generics_def? ( '(' parameters? ')' )? ( '->' type )? block
 
 Internal representation 
 -----------------------
@@ -38,5 +40,11 @@ Compile
 - **ERR10201**: ``"Function incorrectly overrides a base class function ({signature} is different than {other_signature}".``
 - **ERR10202**: ``"Function is attempting to override a base-class function which is not marked abstract or virtual."``
 - **ERR10203**: ``"Specified return type differs from actual return type."``
+- **ERR10204**: ``"Function is marked abstract but has an implementation. Use 'virtual' instead."``
+- **ERR10205**: ``"Function has no implementation but is not marked abstract."``
+- **ERR10206**: ``"Function is marked abstract but is also marked virtual or override."``
+- **ERR10207**: ``"Function is marked override but no parent function was found."``
+- **ERR10208**: ``"Function is marked override but the parent implementation was not marked virtual."``
+- **ERR10209**: ``"Top level function cannot be marked virtual, abstract, or static (it is already static)."``
 - **WRN10200**: ``"Function name overrides a symbol from a greater scope."``
 - **WRN10201**: ``"Function parameter {index} ({param_signature}) name overrides a symbol from a later scope."``
