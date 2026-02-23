@@ -1,7 +1,8 @@
 from __future__ import annotations
 from abc import ABC
 from dataclasses import dataclass
-from tokens import Position, Token
+from typing import Sequence
+from tokens import Lexeme, Position, Token
 
 
 @dataclass
@@ -38,7 +39,8 @@ class Scope(Expression):
 class CustomStatement(Statement):
     name: str
     internal: bool
-    expressions: list[Expression]
+    expressions: list[Expression | Lexeme]
+    following: Sequence[Statement] = []
 
 
 @dataclass 

@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from loguru import logger
-from nodes import Expression, Program
-from scanner import Lexeme, Token
+from nodes import Expression, Program, Span
+from scanner import Lexeme, Position, Token
 
 
 class ParseError(RuntimeError):
@@ -16,10 +16,15 @@ class ParserBase(ABC):
     def __init__(self, tokens: list[Lexeme]) -> None:
         self.tokens = tokens 
         self.current = 0
+        self._stack: list[Position] = []
     
     @property 
     def previous(self) -> Lexeme:
         return self.tokens[self.current - 1]
+    
+    @property 
+    def position(self) -> Position:
+        return self.previous.pos
 
     @abstractmethod
     def parse(self) -> Program:
@@ -30,10 +35,17 @@ class ParserBase(ABC):
         pass
 
     @abstractmethod 
-    def scope(self) -> Expression:
+    def body(self) -> Expression:
         pass
 
     # -- Helpers --
+
+    def begin_node(self) -> None:
+        self._stack.append(self.position)
+    
+    def end_node(self) -> Span:
+        start = self._stack.pop()
+        return Span(start, self.position)
 
     def outside(self, ind: int) -> bool:
         return ind >= len(self.tokens)
@@ -49,11 +61,25 @@ class ParserBase(ABC):
         self.current += 1
         return ret
     
+    def match_kw(self, kw: str, amount: int = 1) -> bool:
+        peek = self.peek(amount)
+        if peek.token != Token.IDENTIFIER:
+            return False
+        if peek.raw != kw:
+            return False 
+        self.advance()
+        return True
+    
     def match(self, token: Token, amount: int = 1) -> bool:
         if self.peek(amount).token == token:
             self.advance()
             return True 
         return False 
+    
+    def consume_kw(self, kw: str, err: str) -> Lexeme:
+        if not self.match_kw(kw):
+            raise ParseError(self.peek(), err)
+        return self.previous
     
     def consume(self, token: Token, err: str) -> Lexeme:
         if not self.match(token):
