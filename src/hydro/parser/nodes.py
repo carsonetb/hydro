@@ -14,41 +14,186 @@ class Span:
         return f"{self.start}-{self.end}"
 
 
+@dataclass
+class Node(ABC):
+    spans: Span
+
+
 @dataclass 
-class Templated:
-    base: Token 
-    templates: list[Templated]
+class Type(Node):
+    name: Lexeme 
+    generics: list[Type]
+
+    def __str__(self) -> str:
+        return f"{self.name}<{",".join(str(generic) for generic in self.generics)}>"
+
+
+@dataclass 
+class Generic(Node):
+    name: Lexeme 
+    inherits: Lexeme
 
 
 @dataclass
-class Statement(ABC):
-    spans: Span 
+class Arguments(Node):
+    positional: list[Expression]
+    keyword: dict[Lexeme, Expression]
+
+
+@dataclass 
+class Annotation(Node):
+    name: Lexeme 
+    args: Arguments
+
+
+@dataclass 
+class Param(Node):
+    typ: Type 
+    name: Lexeme 
+
+
+@dataclass 
+class DefaultParam(Node):
+    typ: Type 
+    name: Lexeme 
+    default: Expression 
+
+
+@dataclass 
+class Parameters(Node):
+    pos: list[Param]
+    defaults: list[DefaultParam]
+
+
+@dataclass
+class Statement(Node):
+    pass
 
 
 @dataclass
 class Expression(Statement):
+    pass
+
+
+@dataclass 
+class Unary(Expression):
+    op: Lexeme 
+    right: Expression
+
+
+@dataclass 
+class Binary(Expression):
+    left: Expression
+    op: Lexeme 
+    right: Expression
+
+
+@dataclass 
+class Primary(Expression):
     pass 
 
 
+@dataclass 
+class Member(Primary):
+    on: Primary
+    name: Lexeme 
+
+
+@dataclass 
+class Call(Primary):
+    on: Primary 
+    generics: list[Type]
+    args: Arguments 
+
+
+@dataclass 
+class Slice(Primary):
+    on: Primary 
+    using: Expression 
+
+
+@dataclass 
+class Atom(Primary):
+    pass
+
+
+@dataclass 
+class Identifier(Atom):
+    text: Lexeme
+
+
+@dataclass 
+class Literal(Atom):
+    value: int | float | str | bool 
+
+
+@dataclass 
+class Tuple(Atom):
+    values: list[Expression]
+
+
+@dataclass 
+class Array(Atom):
+    values: list[Expression]
+
+
 @dataclass
-class Scope(Expression):
+class Block(Atom):
     stmts: list[Statement]
 
 
 @dataclass
 class CustomStatement(Statement):
     name: str
-    internal: bool
-    expressions: list[Expression | Lexeme]
+    expressions: dict[str, Expression | Lexeme]
     following: Sequence[Statement] = []
+    internal: bool = True
 
 
 @dataclass 
-class Declaration(ABC):
+class VarSet(Statement):
+    into: Primary
+    value: Expression
+
+
+@dataclass
+class Declaration(Node):
     pass
 
 
 @dataclass 
+class Import(Declaration):
+    path: list[Lexeme]
+
+
+@dataclass 
+class VarDecl(Declaration, Statement):
+    typ: Type 
+    name: Lexeme 
+    value: Expression
+
+
+@dataclass 
+class Function(Declaration):
+    annotations: list[Annotation]
+    name: Lexeme 
+    generics: list[Generic]
+    params: Parameters
+    returns: Type | None 
+    block: Block | None
+
+
+@dataclass
+class ClassDecl(Declaration):
+    annotations: list[Annotation]
+    name: Lexeme 
+    generics: list[Generic]
+    inherits: list[Type]
+    params: Parameters 
+    members: list[Declaration]
+
+
+@dataclass
 class Program:
-    imports: list
-    declarations: list
+    imports: list[Program]
+    declarations: list[Declaration]

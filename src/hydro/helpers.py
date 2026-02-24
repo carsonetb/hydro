@@ -13,7 +13,9 @@ POINTER = ir.PointerType()
 NULL: ir.Constant = POINTER(None)
 
 
-def cmp_function(module: ir.Module, class_name: str, cmpop: str, lhs: ir.Type, rhs: ir.Type) -> tuple[ir.FunctionType, ir.Function]:
+def cmp_function(
+    module: ir.Module, class_name: str, cmpop: str, lhs: ir.Type, rhs: ir.Type
+) -> tuple[ir.FunctionType, ir.Function]:
     cmp_type = ir.FunctionType(BOOL, [lhs, rhs])
     cmp = ir.Function(module, cmp_type, f"{class_name}__{cmpop}")
     block = cmp.append_basic_block("entry")
@@ -23,12 +25,20 @@ def cmp_function(module: ir.Module, class_name: str, cmpop: str, lhs: ir.Type, r
     return (cmp_type, cmp)
 
 
-def arith_function(module: ir.Module, class_name: str, name: str, generator: Callable[[ir.IRBuilder, ir.Value, ir.Value], ir.Value], lhs: ir.Type, rhs: ir.Type, ret: ir.Type) -> tuple[ir.FunctionType, ir.Function]:
+def arith_function(
+    module: ir.Module,
+    class_name: str,
+    name: str,
+    generator: Callable[[ir.IRBuilder, ir.Value, ir.Value], ir.Value],
+    lhs: ir.Type,
+    rhs: ir.Type,
+    ret: ir.Type,
+) -> tuple[ir.FunctionType, ir.Function]:
     arith_type = ir.FunctionType(ret, [lhs, rhs])
     arith = ir.Function(module, arith_type, f"{class_name}__{name}")
     block = arith.append_basic_block("entry")
     builder = ir.IRBuilder(block)
-    left, right = arith.args 
+    left, right = arith.args
     result = generator(builder, left, right)
     builder.ret(result)
     return (arith_type, arith)

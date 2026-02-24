@@ -1,4 +1,4 @@
-from tokens import Token, Position, Lexeme
+from hydro.tokens import Token, Position, Lexeme
 from loguru import logger
 
 
@@ -116,7 +116,13 @@ class Scanner:
                     self.add_lexeme(Token.STAR)
             case "(": self.add_lexeme(Token.LEFT_PAREN)
             case ")": self.add_lexeme(Token.RIGHT_PAREN)
-            case "-": self.add_lexeme(Token.MINUS_EQUAL if self.match("=") else Token.MINUS)
+            case "-": 
+                if self.match("="):
+                    self.add_lexeme(Token.MINUS_EQUAL)
+                elif self.match(">"):
+                    self.add_lexeme(Token.RETURNS)
+                else:
+                    self.add_lexeme(Token.MINUS)
             case "+": self.add_lexeme(Token.PLUS_EQUAL if self.match("=") else Token.PLUS)
             case "=": self.add_lexeme(Token.EQUAL_EQUAL if self.match("=") else Token.EQUAL)
             case "[": self.add_lexeme(Token.LEFT_BRACKET)

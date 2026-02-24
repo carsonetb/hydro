@@ -44,6 +44,7 @@ class Token(Enum):
     STAR_STAR = auto()
     STAR_EQUAL = auto()
     MINUS_EQUAL = auto()
+    RETURNS = auto()
     PLUS_EQUAL = auto()
     EQUAL_EQUAL = auto()
     PIPE_EQUAL = auto()
@@ -75,18 +76,20 @@ class Token(Enum):
     ERROR = auto()
     EOF = auto()
 
-@dataclass 
+
+@dataclass
 class Position:
     """
     A unique position in a file.
     """
 
     file: str
-    line: int 
-    col: int 
+    line: int
+    col: int
 
     def __repr__(self) -> str:
         return f"{self.line}:{self.col}"
+
 
 @dataclass
 class Lexeme:
@@ -98,10 +101,10 @@ class Lexeme:
     pos: Position
 
     #: Token type of the Lexeme.
-    token: Token 
+    token: Token
 
     #: Raw string of the entire Lexeme.
-    raw: str 
+    raw: str
 
     #: If the Lexeme is a literal, this is its value.
     literal: int | float | str | bool | None = None
@@ -115,9 +118,9 @@ class Lexeme:
         """
 
         return Lexeme(Position("<external>", -1, -1), Token.IDENTIFIER, raw)
-    
+
     def __repr__(self) -> str:
         return self.raw
-    
+
     def __str__(self) -> str:
         return self.raw

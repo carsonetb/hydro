@@ -89,7 +89,7 @@ Hydro language grammar
 
     primary:
         | primary '.' IDENTIFIER 
-        | primary '(' arguments? ')'
+        | primary generics? '(' arguments? ')'
         | primary '[' expression ']'
         | atom 
 

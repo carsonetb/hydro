@@ -66,6 +66,7 @@ Syntax
 
 - ERR00000: "Expected identifier after 'import' keyword."
 - ERR00001: "Expected '.' or ';' after identifier in 'import' keyword."
+- ERR00002: "Expected identifier after '.' in 'import' statement."
 
 Compile 
 +++++++
