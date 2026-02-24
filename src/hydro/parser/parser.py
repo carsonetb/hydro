@@ -2,7 +2,7 @@ from enum import Enum, auto
 from pathlib import Path
 
 from hydro.parser.interface import ParseError
-from hydro.parser.nodes import Annotation, ClassDecl, Declaration, DefaultParam, Function, Generic, Import, Param, Parameters, Program, Span, Type, VarDecl
+from hydro.parser.nodes import Annotation, Arguments, Block, ClassDecl, Declaration, DefaultParam, Expression, Function, Generic, Import, Param, Parameters, Program, Span, Statement, Type, VarDecl
 from hydro.parser.rules import FullParser, Rule
 from hydro.scanner import Lexeme
 from hydro.tokens import Token
@@ -29,14 +29,29 @@ class Parser(FullParser):
         
         return Program([], declarations)
     
+    def body(self) -> Block:
+        self.begin_node()
+        self.consume(Token.LEFT_CURLY, "Expected '{' to start a block.")
+
+        statements: list[Statement] = []
+        while not self.match(Token.RIGHT_CURLY):
+            statements.append(self.statement())
+        
+        span = self.end_node()
+        return Block(span, statements)
+    
     def declaration(self) -> Declaration:
         decltype = self.find_decltype()
-        if decltype == self.DeclType.VAR:
-            return self.var_decl()
-        if decltype == self.DeclType.FN:
-            return self.function_decl()
-        if decltype == self.DeclType.CLASS:
-            return self.class_decl()
+        match decltype:
+            case self.DeclType.VAR:
+                return self.var_decl()
+            case self.DeclType.FN:
+                return self.function_decl()
+            case self.DeclType.CLASS:
+                return self.class_decl()
+    
+    def statement(self) -> Statement:
+        pass
     
     def var_decl(self) -> VarDecl:
         self.begin_node(True)
@@ -140,7 +155,7 @@ class Parser(FullParser):
                 break
         
         while not self.match(Token.RIGHT_PAREN):
-            self.consume(Token.COMMA, "Expected ',' or ')' after argument.")
+            self.consume(Token.COMMA, "Expected ',' or ')' after parameter.")
             self.begin_node(True)
             typ = self.typ()
             name = self.consume(Token.IDENTIFIER, "Expected name of parameter after its type.")
@@ -152,11 +167,63 @@ class Parser(FullParser):
         span = self.end_node()
         return Parameters(span, positionals, defaults)
 
+    def arguments(self) -> Arguments:
+        self.begin_node(True)
+
+        positionals: list[Expression] = []
+        kwargs: dict[Lexeme, Expression] = {}
+
+        while not self.check(Token.EQUAL, 2):
+            positionals.append(self.expression())
+            if not self.match(Token.COMMA):
+                break 
+        
+        while not self.match(Token.RIGHT_PAREN):
+            self.consume(Token.COMMA, "Expected ',' or ')' after argument.")
+            name = self.consume(Token.IDENTIFIER, "Expected name of parameter for keyword argument.")
+            self.consume(Token.EQUAL, "Expected '=' after keyword argument name.")
+            kwargs[name] = self.expression()
+        
+        span = self.end_node()
+        return Arguments(span, positionals, kwargs)
+
     def generics_def(self) -> list[Generic]:
-        pass
+        if not self.match(Token.LEFT_ANGLE):
+            return []
+        
+        out: list[Generic] = []
+        while True:
+            self.begin_node(True)
+            name = self.consume(Token.IDENTIFIER, "Expected generic name.")
+            if self.match(Token.COLON):
+                inherits = self.consume(Token.IDENTIFIER, "Expected inherited type after ':'.")
+            else:
+                inherits = None 
+            span = self.end_node()
+            out.append(Generic(span, name, inherits))
+            if self.match(Token.COMMA): 
+                continue 
+            break
+        self.consume(Token.LEFT_ANGLE, "Expected '>' or ',' after generic.")
+
+        return out
 
     def annotation(self) -> Annotation:
-        pass
+        self.begin_node(True)
+
+        if self.match(Token.AT):
+            name = self.consume(Token.IDENTIFIER, "Expected identifier after '@' in annotation.")
+            if self.match(Token.LEFT_PAREN):
+                args = self.arguments()
+                self.consume(Token.RIGHT_PAREN, "Expected ')' after parameters.")
+            else:
+                args = Arguments(Span(self.position, self.position), [], {})
+        else:
+            name = self.consume(Token.IDENTIFIER, "Expected annotation identifier.")
+            args = Arguments(Span(self.position, self.position), [], {})
+        
+        span = self.end_node()
+        return Annotation(span, name, args)
 
     def find_decltype(self) -> DeclType:
         while True:

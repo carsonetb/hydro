@@ -29,8 +29,13 @@ Hydro language grammar
     inheritance:  ':' ( type | ( '(' type ( ',' type )* ')' ) )
     members:      declaration ( ',' declaration )*
 
+    kwargs: IDENTIFIER '=' expression ( ',' IDENTIFIER '=' expression )*
+    arguments: 
+        | expression ( ',' expression )* kwargs?
+        | kwargs
+
     annotation: 
-        | '@' IDENTIFIER ( '(' parameters? ')' )?
+        | '@' IDENTIFIER ( '(' arguments? ')' )?
         | IDENTIFIER
     
     assigner: 

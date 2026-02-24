@@ -31,13 +31,13 @@ class Type(Node):
 @dataclass 
 class Generic(Node):
     name: Lexeme 
-    inherits: Lexeme
+    inherits: Lexeme | None
 
 
 @dataclass
 class Arguments(Node):
-    positional: list[Expression]
-    keyword: dict[Lexeme, Expression]
+    pos: list[Expression]
+    kwargs: dict[Lexeme, Expression]
 
 
 @dataclass 
