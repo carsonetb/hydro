@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import overload
 from loguru import logger
 from nodes import Expression, Program, Block, Span
 from scanner import Lexeme, Position, Token
@@ -62,11 +63,17 @@ class ParserBase(ABC):
         self.advance()
         return True
 
-    def match(self, token: Token, amount: int = 1) -> bool:
-        if self.peek(amount).token == token:
-            self.advance()
-            return True
-        return False
+    def match(self, what: Token | list[Token], amount: int = 1) -> bool:
+        if isinstance(what, Token):
+            if self.peek(amount).token == what:
+                self.advance()
+                return True
+            return False
+        else:
+            if self.peek(amount).token in what:
+                self.advance()
+                return True 
+            return False
 
     def consume_kw(self, kw: str, err: str, code: str = "-1") -> Lexeme:
         if not self.match_kw(kw):

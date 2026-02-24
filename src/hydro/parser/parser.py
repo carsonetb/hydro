@@ -1,8 +1,9 @@
 from enum import Enum, auto
 from pathlib import Path
+from typing import Callable
 
 from hydro.parser.interface import ParseError
-from hydro.parser.nodes import Annotation, Arguments, Block, ClassDecl, Declaration, DefaultParam, Expression, Function, Generic, Import, Param, Parameters, Program, Span, Statement, Type, VarDecl
+from hydro.parser.nodes import Annotation, Arguments, Binary, Block, ClassDecl, Declaration, DefaultParam, Expression, Function, Generic, Import, Param, Parameters, Primary, Program, Span, Statement, Ternary, Type, VarDecl, VarSet
 from hydro.parser.rules import FullParser, Rule
 from hydro.scanner import Lexeme
 from hydro.tokens import Token
@@ -51,7 +52,92 @@ class Parser(FullParser):
                 return self.class_decl()
     
     def statement(self) -> Statement:
+        for rule in self.rules:
+            if self.match_kw(rule.name):
+                return rule.generator(self)
+        if self.check(Token.LEFT_ANGLE, 2) or self.check(Token.EQUAL, 3):
+            return self.var_decl()
+        elif self.check(Token.EQUAL, 1) or self.check(Token.DOT, 1) or self.check(Token.LEFT_PAREN, 1) or self.check(Token.LEFT_BRACKET, 1):
+            return self.var_set()
+        else:
+            return self.expression()
+    
+    def expression(self) -> Expression:
+        return self.ternary()
+    
+    def binary(self, ops: list[Token], lower: Callable[[], Expression]):
+        self.begin_node(True)
+        expr = lower()
+        while self.match(ops):
+            op = self.previous
+            right = lower()
+            expr = Binary(Span(self._stack[-1], self.position), expr, op, right)
+        self.end_node()
+        return expr
+
+    def ternary(self) -> Expression:
+        self.begin_node(True)
+        switch_or_expr = self.disjunction()
+
+        if self.match(Token.QUESTION):
+            truthy = self.disjunction()
+            self.consume(Token.COLON, "Expected ':' to seperate expressions in ternary.")
+            falsey = self.expression()
+            span = self.end_node()
+            return Ternary(span, switch_or_expr, truthy, falsey)
+        
+        self.end_node()
+        return switch_or_expr
+    
+    def disjunction(self) -> Expression:
+        return self.binary([Token.PIPE_PIPE], self.conjunction)
+    
+    def conjunction(self) -> Expression:
+        return self.binary([Token.AND_AND], self.equality)
+    
+    def equality(self) -> Expression:
+        return self.binary([Token.EQUAL_EQUAL, Token.BANG_EQUAL], self.comparison)
+    
+    def comparison(self) -> Expression:
+        return self.binary(
+            [
+                Token.LEFT_ANGLE,
+                Token.RIGHT_ANGLE,
+                # TODO: Less and greater equal
+            ],
+            self.bitwise_or
+        )
+    
+    def bitwise_or(self) -> Expression:
+        return self.binary([Token.PIPE], self.bitwise_xor)
+    
+    def bitwise_xor(self) -> Expression:
+        return self.binary([Token.CARET], self.bitwise_and)
+    
+    def bitwise_and(self) -> Expression:
+        return self.binary([Token.AND], self.shift_expr)
+    
+    def shift_expr(self) -> Expression:
+        return self.binary([Token.LEFT_ANGLE_ANGLE, Token.RIGHT_ANGLE_ANGLE], self.term)
+    
+    def term(self) -> Expression:
+        return self.binary([Token.PLUS, Token.MINUS], self.factor)
+    
+    def factor(self) -> Expression:
+        return self.binary([Token.STAR, Token.SLASH, Token.MODULO, Token.AT], self.unary)
+    
+    # TODO: Unary
+    
+    def primary(self) -> Primary:
         pass
+    
+    def var_set(self) -> VarSet:
+        self.begin_node(True)
+        into = self.primary()
+        self.consume(Token.EQUAL, "Expected '=' after identifier.")
+        value = self.expression()
+        span = self.end_node()
+        return VarSet(span, into, value)
     
     def var_decl(self) -> VarDecl:
         self.begin_node(True)

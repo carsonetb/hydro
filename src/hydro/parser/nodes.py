@@ -76,6 +76,13 @@ class Expression(Statement):
 
 
 @dataclass 
+class Ternary(Expression):
+    switch: Expression 
+    truthy: Expression 
+    falsey: Expression
+
+
+@dataclass 
 class Unary(Expression):
     op: Lexeme 
     right: Expression
