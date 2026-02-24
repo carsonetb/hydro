@@ -1,9 +1,11 @@
+from ast import Expr
 from enum import Enum, auto
+from loguru import logger
 from pathlib import Path
 from typing import Callable
 
 from hydro.parser.interface import ParseError
-from hydro.parser.nodes import Annotation, Arguments, Binary, Block, ClassDecl, Declaration, DefaultParam, Expression, Function, Generic, Import, Param, Parameters, Primary, Program, Span, Statement, Ternary, Type, VarDecl, VarSet
+from hydro.parser.nodes import Annotation, Arguments, Array, Atom, Binary, Block, Call, ClassDecl, Declaration, DefaultParam, Expression, Function, Generic, Grouping, Identifier, Import, Literal, Member, Param, Parameters, Primary, Program, Slice, Span, Statement, Ternary, Tuple, Type, Unary, VarDecl, VarSet
 from hydro.parser.rules import FullParser, Rule
 from hydro.scanner import Lexeme
 from hydro.tokens import Token
@@ -15,11 +17,14 @@ class Parser(FullParser):
         FN = auto()
         CLASS = auto()
 
-    def __init__(self, srcdir: Path, file: Path, tokens: list[Lexeme], rules: list[Rule]) -> None:
+    def __init__(self, srcdir: Path, file: Path, tokens: list[Lexeme], rules: list[Rule], handled_imports: dict[str, Program]) -> None:
         super().__init__(srcdir, file, tokens)
 
         self.rules = rules
         self.imports: list[Import] = []
+        self.handled_imports = handled_imports
+
+        logger.debug(f"Initialized parser at {file}.")
     
     def parse(self) -> Program:
         self.process_imports()
@@ -27,6 +32,14 @@ class Parser(FullParser):
         declarations: list[Declaration] = []
         while not self.match(Token.EOF):
             declarations.append(self.declaration())
+        
+        logger.debug("Parser finished. Dispatching parsers to imports.")
+
+        for im in self.imports:
+            base = self.srcdir
+            for segment in im.path:
+                base /= segment.raw
+            # TODO: Dispatch scanner and shiz.                
         
         return Program([], declarations)
     
@@ -126,10 +139,77 @@ class Parser(FullParser):
     def factor(self) -> Expression:
         return self.binary([Token.STAR, Token.SLASH, Token.MODULO, Token.AT], self.unary)
     
-    # TODO: Unary
+    def unary(self) -> Expression:
+        if self.match([Token.BANG, Token.MINUS]):
+            self.begin_node()
+            op = self.previous 
+            right = self.unary()
+            span = self.end_node()
+            return Unary(span, op, right)
+        return self.power()
     
-    def primary(self) -> Primary:
-        pass
+    def power(self) -> Expression:
+        return self.binary([Token.STAR_STAR], self.primary)
+    
+    def primary(self, prefix: Primary | None = None) -> Primary:
+        if prefix is not None:
+            self.begin_node(True)
+            if self.match(Token.DOT):
+                name = self.consume(Token.IDENTIFIER, "Expected identifier after '.'.")
+                return self.primary(Member(self.end_node(), prefix, name))
+            elif self.check(Token.LEFT_PAREN) or self.check(Token.LEFT_ANGLE):
+                generics = self.generics()
+                arguments = self.arguments()
+                return self.primary(Call(self.end_node(), prefix, generics, arguments))
+            elif self.match(Token.LEFT_BRACKET):
+                expr = self.expression()
+                return self.primary(Slice(self.end_node(), prefix, expr))
+            return prefix
+        return self.primary(self.atom())
+
+    def atom(self) -> Atom:
+        self.begin_node(True)
+        if self.match(Token.IDENTIFIER):
+            return Identifier(self.end_node(), self.previous)
+        if self.match([Token.INT, Token.FLOAT, Token.STRING, Token.CHARACTER, Token.BOOL]):
+            assert self.previous.literal is not None
+            return Literal(self.end_node(), self.previous, self.previous.literal)
+        if self.check(Token.LEFT_CURLY):
+            return self.body()
+        if self.check(Token.LEFT_PAREN):
+            return self.paren_expr()
+        if self.check(Token.LEFT_BRACKET):
+            return self.array()
+        raise ParseError(self.peek(), "Expected identifier, int, float, string, character, boolean, '(', '{', '['")
+    
+    def paren_expr(self) -> Atom:
+        self.begin_node(True)
+        if self.match(Token.RIGHT_PAREN):
+            return Tuple(self.end_node(), [])
+        expr = self.expression()
+        if self.match(Token.RIGHT_PAREN):
+            return Grouping(self.end_node(), expr)
+        values = [expr]
+        while True:
+            self.consume(Token.COMMA, "Expected ',' or ')'.")
+            values.append(self.expression())
+            if self.match(Token.RIGHT_PAREN):
+                break 
+        span = self.end_node()
+        return Tuple(span, values)
+
+    def array(self) -> Array:
+        self.begin_node(True)
+        if self.match(Token.RIGHT_BRACKET):
+            return Array(self.end_node(), [])
+        values: list[Expression] = []
+        while True:
+            values.append(self.expression())
+            if self.match(Token.RIGHT_PAREN):
+                break 
+            self.consume(Token.COMMA, "Expected ',' or ')'.")
+        span = self.end_node()
+        return Array(span, values)
     
     def var_set(self) -> VarSet:
         self.begin_node(True)
@@ -272,6 +352,17 @@ class Parser(FullParser):
         
         span = self.end_node()
         return Arguments(span, positionals, kwargs)
+    
+    def generics(self) -> list[Type]:
+        if not self.match(Token.LEFT_ANGLE):
+            return []
+        
+        out: list[Type] = [self.typ()]
+        while not self.match(Token.RIGHT_ANGLE):
+            self.consume(Token.COMMA, "Expected ',' or '>' to end generics.")
+            out.append(self.typ())
+        
+        return out
 
     def generics_def(self) -> list[Generic]:
         if not self.match(Token.LEFT_ANGLE):

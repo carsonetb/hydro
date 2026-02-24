@@ -131,7 +131,13 @@ class Identifier(Atom):
 
 @dataclass 
 class Literal(Atom):
+    token: Lexeme
     value: int | float | str | bool 
+
+
+@dataclass
+class Grouping(Atom):
+    expr: Expression
 
 
 @dataclass 
