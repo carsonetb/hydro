@@ -7,7 +7,7 @@ from typing import Callable
 from hydro.parser.interface import ParseError
 from hydro.parser.nodes import Annotation, Arguments, Array, Atom, Binary, Block, Call, ClassDecl, Declaration, DefaultParam, Expression, Function, Generic, Grouping, Identifier, Import, Literal, Member, Param, Parameters, Primary, Program, Slice, Span, Statement, Ternary, Tuple, Type, Unary, VarDecl, VarSet
 from hydro.parser.rules import FullParser, Rule
-from hydro.scanner import Lexeme
+from hydro.scanner import Lexeme, Scanner
 from hydro.tokens import Token
 
 
@@ -35,13 +35,22 @@ class Parser(FullParser):
         
         logger.debug("Parser finished. Dispatching parsers to imports.")
 
+        out = Program([], declarations)
+
+        imports: list[Program] = []
         for im in self.imports:
             base = self.srcdir
             for segment in im.path:
                 base /= segment.raw
-            # TODO: Dispatch scanner and shiz.                
+            if not base.exists():
+                raise ParseError(im.spans, f"Invalid path to import: '{base}'")
+            scanner = Scanner(base)
+            lexemes = scanner.scan_source()
+            parser = Parser(self.srcdir, base, lexemes, self.rules, self.handled_imports | {str(base): out})
+            imports.append(parser.parse())
         
-        return Program([], declarations)
+        out.imports = imports 
+        return out
     
     def body(self) -> Block:
         self.begin_node()

@@ -7,9 +7,10 @@ from scanner import Lexeme, Position, Token
 
 
 class ParseError(RuntimeError):
-    def __init__(self, lexeme: Lexeme, msg: str, code: str = "-1") -> None:
+    def __init__(self, lexeme: Lexeme | Span, msg: str, code: str = "-1") -> None:
         super().__init__()
-        logger.error(f"[Parser] [{lexeme.pos}] [{lexeme}] {f"[{code}]" if code != "-1" else ""} {msg}")
+        if isinstance(lexeme, Lexeme):
+            logger.error(f"[Parser] [{lexeme.pos}] [{lexeme}] {f"[{code}]" if code != "-1" else ""} {msg}")
         self.lexeme = lexeme
         self.msg = msg
         self.code = code

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from hydro.tokens import Token, Position, Lexeme
 from loguru import logger
 
@@ -25,14 +27,14 @@ class Scanner:
         "\"": "\"",
     }
 
-    def __init__(self, file: str, source: str) -> None:
+    def __init__(self, file: Path) -> None:
         """
         :param file: The path to the module relative to project root.
         :param source: Raw contents of the file.
         """        
 
         self.file = file
-        self.source = source
+        self.source = open(self.file).read()
         self.start = 0
         self.current = 0
         self.line = 1
@@ -43,7 +45,7 @@ class Scanner:
     
     @property 
     def position(self) -> Position:
-        return Position(self.file, self.line, self.col)
+        return Position(str(self.file), self.line, self.col)
 
     @property 
     def raw(self) -> str:
