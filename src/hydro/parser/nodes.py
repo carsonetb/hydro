@@ -1,6 +1,7 @@
 from __future__ import annotations
 from abc import ABC
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Sequence
 from tokens import Lexeme, Position, Token
 
@@ -73,6 +74,12 @@ class Statement(Node):
 @dataclass
 class Expression(Statement):
     pass
+
+
+@dataclass 
+class InferredExpr(Expression):
+    typ: Type
+    expr: Expression
 
 
 @dataclass 
@@ -208,5 +215,6 @@ class ClassDecl(Declaration):
 
 @dataclass
 class Program:
+    path: Path
     imports: list[Program]
     declarations: list[Declaration]
