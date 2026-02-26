@@ -4,11 +4,15 @@ from loguru import logger
 from pathlib import Path
 from typing import Callable
 
+from hydro.loggers import create_logger
 from hydro.parser.interface import ParseError
 from hydro.parser.nodes import Annotation, Arguments, Array, Atom, Binary, Block, Call, ClassDecl, Declaration, DefaultParam, Expression, Function, Generic, Grouping, Identifier, Import, Literal, Member, Param, Parameters, Primary, Program, Slice, Span, Statement, Ternary, Tuple, Type, Unary, VarDecl, VarSet
 from hydro.parser.rules import FullParser, Rule
 from hydro.scanner import Lexeme, Scanner
 from hydro.tokens import Token
+
+
+logger = create_logger("Parser")
 
 
 class Parser(FullParser):
