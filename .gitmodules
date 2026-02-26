@@ -1,0 +1,6 @@
+[submodule "src/hydro/resources/hashmap.c"]
+	path = src/hydro/resources/hashmap.c
+	url = https://github.com/tidwall/hashmap.c
+[submodule "src/hydro/resources/hashmap"]
+	path = src/hydro/resources/hashmap
+	url = https://github.com/tidwall/hashmap.c

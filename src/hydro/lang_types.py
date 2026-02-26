@@ -526,7 +526,7 @@ class BoolType(ObjectType):
         super().__init__(value, typ, allocate, reference, dbg_name)
 
     @staticmethod
-    def create_metatype(generics: list[BaseMetatype]) -> BaseMetatype:
+    def create_metatype(generics: list[BaseMetatype] = []) -> BaseMetatype:
         return BaseMetatype(
             BoolType,
             TypeHeader("Bool", {}, [get_type(TypeRepr(ObjectType))], {}, {}, {}, has_constructor=False),
