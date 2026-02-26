@@ -1,10 +1,13 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
-from loguru import logger
 from pathlib import Path
 
+from hydro.loggers import create_logger
 from hydro.parser.nodes import ClassDecl, Declaration, Program, Type
+
+
+logger = create_logger("Analyzer")
 
 
 @dataclass
@@ -20,7 +23,7 @@ class ClassRepr:
 
 class Analyzer:
     def __init__(self, program: Program) -> None:
-        logger.debug(f"[Analyzer] Starting in {program.path}")
+        logger.debug(f"Starting in {program.path}")
 
         self.declarations: list[Declaration] = self.consolidate(program)
         self.classes: dict[str, ClassRepr] = {}
@@ -32,7 +35,7 @@ class Analyzer:
                 continue 
 
     def consolidate(self, program: Program, processed: list[Path] = []) -> list[Declaration]:
-        logger.debug(f"[Analzyer] Merging {program.path}.")
+        logger.debug(f"Merging {program.path}.")
 
         out: list[Declaration] = []
         for sub in program.imports:

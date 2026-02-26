@@ -1,9 +1,12 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import overload
-from loguru import logger
-from nodes import Expression, Program, Block, Span
-from scanner import Lexeme, Position, Token
+
+from hydro.loggers import create_logger
+from hydro.parser.nodes import Expression, Program, Block, Span
+from hydro.scanner import Lexeme, Position, Token
+
+
+logger = create_logger("Parser", False)
 
 
 class ParseError(RuntimeError):

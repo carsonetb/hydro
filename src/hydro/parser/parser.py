@@ -1,6 +1,5 @@
 from ast import Expr
 from enum import Enum, auto
-from loguru import logger
 from pathlib import Path
 from typing import Callable
 
@@ -39,7 +38,7 @@ class Parser(FullParser):
         
         logger.debug("Parser finished. Dispatching parsers to imports.")
 
-        out = Program([], declarations)
+        out = Program(self.file, [], declarations)
 
         imports: list[Program] = []
         for im in self.imports:
