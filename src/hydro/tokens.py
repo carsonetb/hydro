@@ -125,3 +125,6 @@ class Lexeme:
 
     def __str__(self) -> str:
         return self.raw
+    
+    def __hash__(self) -> int:
+        return self.raw.__hash__()
