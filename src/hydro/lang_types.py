@@ -1,16 +1,11 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from copy import copy, deepcopy
+from copy import deepcopy
 from dataclasses import dataclass
-from encodings.punycode import T
 from enum import Enum, auto
-from typing import cast
 import typing
-from hydro.builders import builder_stack, current_module, runtime
-from hydro.helpers import BOOL, CHAR, POINTER, INT, arith_function, get_type_size, cmp_function
 from llvmlite.ir import (
     CastInstr,
-    Constant,
     Function,
     FunctionType,
     IRBuilder,
@@ -21,7 +16,14 @@ from llvmlite.ir import (
     GlobalVariable,
     ArrayType,
 )
-from loguru import logger
+
+from hydro.builders import builder_stack, current_module, runtime
+from hydro.helpers import BOOL, POINTER, INT, arith_function, get_type_size, cmp_function
+from hydro.loggers import create_logger
+
+
+logger = create_logger("Types")
+
 
 type_db: dict[str, BaseMetatype] = {}
 
@@ -157,8 +159,8 @@ class ObjectType:
 
         builder = builder_stack[-1]
         builder.comment(f"Load value named '{name}' from '{self.name}'")
-        member = self.members[name]
         assert name in self.members
+        member = self.members[name]
         internal_mem = self._get_index(member.struct_index, into_name)
         internal_ptr: CastInstr = builder.bitcast(internal_mem, member.typ.llvm_type.as_pointer(), f"{into_name}_ptr")  # type: ignore
         return member.typ.bound.from_value(internal_ptr, member.typ, reference, into_name)
@@ -276,22 +278,16 @@ class BaseMetatype(ObjectType):
     """
 
     NAME = "Type"
-    LLVM_TYPE = current_module.context.get_identified_type("Type")
+    IS_REFCOUNTED = True
 
     def __init__(self, bound: type[ObjectType], header: TypeHeader) -> None:
-        if not self.LLVM_TYPE.elements:
-            # Because setting members dynamically at runtime is complex
-            # and Types are always global, getters are implemented
-            # statically within this instance instead of in code. In
-            # the future this should probably be fixed.
-            self.LLVM_TYPE.set_body()
 
-        # TODO: Once above implemented, move to type llvm initializer.
         # TODO: Finalize this type generation.
         logger.debug(f"Creating a new type object named {header.name}")
-        self.llvm_type: IdentifiedStructType = current_module.context.get_identified_type(header.name)
+        self.llvm_type: IdentifiedStructType = current_module.context.get_identified_type(header.name) # TODO: Correct internal naming
+        self.static_llvm_type: IdentifiedStructType = current_module.context.get_identified_type(f"{header.name}__type")
 
-        super().__init__(self.LLVM_TYPE([]), self)
+        super().__init__(self.static_llvm_type([]), self)
 
         self.bound = bound
         self.header = header
@@ -337,7 +333,12 @@ class BaseMetatype(ObjectType):
         return False
 
     def has_member(self, name: str) -> bool:
-        return name in self.object_members
+        return name in self.static_members
+    
+    def get_member(self, name: str, reference: bool = False, into_name: str = "unnamed_object") -> ObjectType:
+        # TODO: This probably looks really weird in the IR.
+        assert name in self.static_members 
+        return self.static_members[name]
 
     def add_parameter(self, name: str, typ: BaseMetatype) -> None:
         info = MemberInfo(typ, self.struct_index)
@@ -392,6 +393,7 @@ class BaseMetatype(ObjectType):
 
     def finalize(self) -> None:
         struct = self._generate_struct()
+        static_struct = self._generate_static()
 
         # for name, (vtable, typ) in self.vtables.items():
         #     table_typ = ArrayType(POINTER, len(vtable))
@@ -422,6 +424,7 @@ class BaseMetatype(ObjectType):
         self.vtable_global.initializer = vtable_group  # type: ignore
 
         self.llvm_type.set_body(struct)
+        self.static_llvm_type.set_body(static_struct)
 
     def get_vptr_constant(self, type_name: str) -> Value:
         builder = builder_stack[-1]
@@ -432,7 +435,9 @@ class BaseMetatype(ObjectType):
 
     @staticmethod
     def create_metatype(generics: list[BaseMetatype]) -> BaseMetatype:
-        raise RuntimeError
+        assert len(generics) == 0
+        header = TypeHeader("Type", {}, [get_type(TypeRepr(ObjectType))], {})
+        return BaseMetatype(BaseMetatype, header)
 
     def _search_vtables(self, name: str) -> tuple[str, int]:
         for typ, (vtable, _) in self.vtables.items():
@@ -440,6 +445,15 @@ class BaseMetatype(ObjectType):
                 if entry.name == name:
                     return (typ, i)
         assert False
+
+    def _generate_static(self) -> list[Type]:
+        out: list[Type] = []
+
+        statics = list(self.static_members.values())
+        for static in statics:
+            out.append(static.typ.llvm_type)
+        
+        return out
 
     def _generate_struct(self) -> list[Type]:
         out: list[Type] = []
@@ -692,6 +706,28 @@ class ListType(ObjectType):
 
 class TupleType(ObjectType):
     pass
+
+
+class DictType(ObjectType):
+    def __init__(
+        self, 
+        value: Value, 
+        typ: BaseMetatype, 
+        allocate: bool = True, 
+        reference: bool = False, 
+        dbg_name: str = "unnamed_dict"
+    ) -> None:
+        super().__init__(value, typ, allocate, reference, dbg_name)
+
+        self.key_type = self.typ.header.generics["Key"]
+        self.value_type = self.typ.header.generics["Value"]
+
+        at_type = get_type(TypeRepr(InstanceCallable, [TypeRepr(DictType), [TypeRepr(self.key_type.bound)], TypeRepr(self.value_type.bound)]))
+        
+        self.members = {
+            "at": (at_type, 1),
+            "[]": (at_type, 1),
+        }
 
 
 class Callable(ObjectType, ABC):
