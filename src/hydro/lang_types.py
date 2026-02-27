@@ -276,22 +276,16 @@ class BaseMetatype(ObjectType):
     """
 
     NAME = "Type"
-    LLVM_TYPE = current_module.context.get_identified_type("Type")
+    IS_REFCOUNTED = True
 
     def __init__(self, bound: type[ObjectType], header: TypeHeader) -> None:
-        if not self.LLVM_TYPE.elements:
-            # Because setting members dynamically at runtime is complex
-            # and Types are always global, getters are implemented
-            # statically within this instance instead of in code. In
-            # the future this should probably be fixed.
-            self.LLVM_TYPE.set_body()
 
-        # TODO: Once above implemented, move to type llvm initializer.
         # TODO: Finalize this type generation.
         logger.debug(f"Creating a new type object named {header.name}")
-        self.llvm_type: IdentifiedStructType = current_module.context.get_identified_type(header.name)
+        self.llvm_type: IdentifiedStructType = current_module.context.get_identified_type(header.name) # TODO: Correct internal naming
+        self.static_llvm_type: IdentifiedStructType = current_module.context.get_identified_type(f"{header.name}__type")
 
-        super().__init__(self.LLVM_TYPE([]), self)
+        super().__init__(self.static_llvm_type([]), self)
 
         self.bound = bound
         self.header = header
