@@ -1,11 +1,10 @@
 from llvmlite import ir
-from helpers import CHAR, LONG, POINTER, INT, VOID
 from importlib.resources import as_file, files
-import subprocess 
+import subprocess
 import llvmlite.binding as llvm
 
-from hydro.lang_types import BOOL, current_module
-from hydro.main import create_logger
+from hydro.helpers import CHAR, LONG, POINTER, INT, VOID, BOOL
+from hydro.loggers import create_logger
 
 
 logger = create_logger("Runtime")
@@ -58,42 +57,45 @@ class Runtime:
         self.sprintf_func = ir.Function(self.module, self.sprintf_type, "sprintf")
 
         # %struct.hashmap = type { ptr, ptr, ptr, i64, i64, i64, i64, ptr, ptr, ptr, ptr, i64, i64, i64, i64, i64, i64, i8, i8, i8, ptr, ptr, ptr }
-        self.hashmap_struct = current_module.context.get_identified_type("struct.hashmap")
+        self.hashmap_struct = module.context.get_identified_type("struct.hashmap")
         self.hashmap_struct.set_body([
             POINTER, POINTER, POINTER,
-            LONG, LONG, LONG, LONG, 
+            LONG, LONG, LONG, LONG,
             POINTER, POINTER, POINTER, POINTER,
-            LONG, LONG, LONG, LONG, LONG, LONG, 
-            CHAR, CHAR, CHAR, 
+            LONG, LONG, LONG, LONG, LONG, LONG,
+            CHAR, CHAR, CHAR,
             POINTER, POINTER, POINTER,
         ])
 
-        self.hashmap_new_typ = ir.FunctionType(POINTER, [LONG, LONG, LONG, LONG, LONG, LONG, LONG])
-        self.hashmap_new = ir.Function(current_module, self.hashmap_new_typ, "hashmap_new")
+        self.hashmap_new_typ = ir.FunctionType(POINTER, [LONG, LONG, LONG, LONG, POINTER, POINTER, POINTER, POINTER])
+        self.hashmap_new = ir.Function(module, self.hashmap_new_typ, "hashmap_new")
 
         self.hashmap_free_typ = ir.FunctionType(VOID, [POINTER])
-        self.hashmap_free = ir.Function(current_module, self.hashmap_free_typ, "hashmap_free")
+        self.hashmap_free = ir.Function(module, self.hashmap_free_typ, "hashmap_free")
 
         self.hashmap_count_typ = ir.FunctionType(LONG, [POINTER])
-        self.hashmap_free = ir.Function(current_module, self.hashmap_count_typ, "hashmap_count")
+        self.hashmap_free = ir.Function(module, self.hashmap_count_typ, "hashmap_count")
 
         self.hashmap_set_typ = ir.FunctionType(POINTER, [POINTER, POINTER])
-        self.hashmap_set = ir.Function(current_module, self.hashmap_set_typ, "hashmap_set")
+        self.hashmap_set = ir.Function(module, self.hashmap_set_typ, "hashmap_set")
 
         self.hashmap_get_typ = ir.FunctionType(POINTER, [POINTER, POINTER])
-        self.hashmap_get = ir.Function(current_module, self.hashmap_get_typ, "hashmap_get")
+        self.hashmap_get = ir.Function(module, self.hashmap_get_typ, "hashmap_get")
 
         self.hashmap_delete_typ = ir.FunctionType(POINTER, [POINTER, POINTER])
-        self.hashmap_delete = ir.Function(current_module, self.hashmap_delete_typ, "hashmap_delete")
+        self.hashmap_delete = ir.Function(module, self.hashmap_delete_typ, "hashmap_delete")
 
         self.hashmap_clear_typ = ir.FunctionType(VOID, [POINTER, BOOL])
-        self.hashmap_clear = ir.Function(current_module, self.hashmap_clear_typ, "hashmap_clear")
+        self.hashmap_clear = ir.Function(module, self.hashmap_clear_typ, "hashmap_clear")
 
         self.hashmap_iter_typ = ir.FunctionType(BOOL, [POINTER, POINTER, POINTER])
-        self.hashmap_iter = ir.Function(current_module, self.hashmap_iter_typ, "hashmap_iter")
+        self.hashmap_iter = ir.Function(module, self.hashmap_iter_typ, "hashmap_iter")
 
         self.hashmap_scan_typ = ir.FunctionType(BOOL, [POINTER, POINTER, POINTER])
-        self.hashmap_scan = ir.Function(current_module, self.hashmap_scan_typ, "hashmap_scan")
+        self.hashmap_scan = ir.Function(module, self.hashmap_scan_typ, "hashmap_scan")
+
+        self.hashmap_sip_typ = ir.FunctionType(LONG, [POINTER, LONG, LONG, LONG])
+        self.hashmap_sip = ir.Function(module, self.hashmap_sip_typ, "hashmap_sip")
 
         # byte* rc_alloc(int32 size)
         self.rc_alloc_type = ir.FunctionType(POINTER, [INT])
@@ -170,3 +172,6 @@ class Runtime:
         builder.ret_void()
 
         logger.debug("Initialized runtime.")
+
+if __name__ == "__main__":
+    load_hashmap()

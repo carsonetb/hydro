@@ -20,18 +20,18 @@ class Node(ABC):
     spans: Span
 
 
-@dataclass 
+@dataclass
 class Type(Node):
-    name: Lexeme 
+    name: Lexeme
     generics: list[Type]
 
     def __str__(self) -> str:
         return f"{self.name}<{",".join(str(generic) for generic in self.generics)}>"
 
 
-@dataclass 
+@dataclass
 class Generic(Node):
-    name: Lexeme 
+    name: Lexeme
     inherits: Lexeme | None
 
 
@@ -41,26 +41,26 @@ class Arguments(Node):
     kwargs: dict[Lexeme, Expression]
 
 
-@dataclass 
+@dataclass
 class Annotation(Node):
-    name: Lexeme 
+    name: Lexeme
     args: Arguments
 
 
-@dataclass 
+@dataclass
 class Param(Node):
-    typ: Type 
-    name: Lexeme 
+    typ: Type
+    name: Lexeme
 
 
-@dataclass 
+@dataclass
 class DefaultParam(Node):
-    typ: Type 
-    name: Lexeme 
-    default: Expression 
+    typ: Type
+    name: Lexeme
+    default: Expression
 
 
-@dataclass 
+@dataclass
 class Parameters(Node):
     pos: list[Param]
     defaults: list[DefaultParam]
@@ -76,70 +76,64 @@ class Expression(Statement):
     pass
 
 
-@dataclass 
-class InferredExpr(Expression):
-    typ: Type
-    expr: Expression
-
-
-@dataclass 
+@dataclass
 class Ternary(Expression):
-    switch: Expression 
-    truthy: Expression 
+    switch: Expression
+    truthy: Expression
     falsey: Expression
 
 
-@dataclass 
+@dataclass
 class Unary(Expression):
-    op: Lexeme 
+    op: Lexeme
     right: Expression
 
 
-@dataclass 
+@dataclass
 class Binary(Expression):
     left: Expression
-    op: Lexeme 
+    op: Lexeme
     right: Expression
 
 
-@dataclass 
+@dataclass
 class Primary(Expression):
-    pass 
+    pass
 
 
-@dataclass 
+@dataclass
 class Member(Primary):
     on: Primary
-    name: Lexeme 
+    name: Lexeme
 
 
-@dataclass 
+@dataclass
 class Call(Primary):
-    on: Primary 
+    on: Primary
     generics: list[Type]
-    args: Arguments 
+    args: Arguments
 
 
-@dataclass 
+@dataclass
 class Slice(Primary):
-    on: Primary 
-    using: Expression 
+    on: Primary
+    using: Expression
 
 
-@dataclass 
+@dataclass
 class Atom(Primary):
     pass
 
 
-@dataclass 
+@dataclass
 class Identifier(Atom):
     text: Lexeme
 
 
-@dataclass 
+@dataclass
 class Literal(Atom):
     token: Lexeme
-    value: int | float | str | bool 
+    value: int | float | str | bool
 
 
 @dataclass
@@ -147,12 +141,12 @@ class Grouping(Atom):
     expr: Expression
 
 
-@dataclass 
+@dataclass
 class Tuple(Atom):
     values: list[Expression]
 
 
-@dataclass 
+@dataclass
 class Array(Atom):
     values: list[Expression]
 
@@ -170,7 +164,7 @@ class CustomStatement(Statement):
     internal: bool = True
 
 
-@dataclass 
+@dataclass
 class VarSet(Statement):
     into: Primary
     value: Expression
@@ -181,35 +175,35 @@ class Declaration(Node):
     pass
 
 
-@dataclass 
+@dataclass
 class Import(Declaration):
     path: list[Lexeme]
 
 
-@dataclass 
+@dataclass
 class VarDecl(Declaration, Statement):
-    typ: Type 
-    name: Lexeme 
+    typ: Type
+    name: Lexeme
     value: Expression
 
 
-@dataclass 
+@dataclass
 class Function(Declaration):
     annotations: list[Annotation]
-    name: Lexeme 
+    name: Lexeme
     generics: list[Generic]
     params: Parameters
-    returns: Type | None 
+    returns: Type | None
     block: Block | None
 
 
 @dataclass
 class ClassDecl(Declaration):
     annotations: list[Annotation]
-    name: Lexeme 
+    name: Lexeme
     generics: list[Generic]
     inherits: list[Type]
-    params: Parameters 
+    params: Parameters
     members: list[Declaration]
 
 
