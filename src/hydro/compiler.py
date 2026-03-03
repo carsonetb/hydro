@@ -2,13 +2,14 @@ from dataclasses import dataclass
 from pathlib import Path
 import llvmlite.binding as llvm
 from llvmlite.ir import Function, FunctionType, IRBuilder, Module
+from llvmlite.ir.types import Type
 
 import hydro.builders as builders
-from hydro.builders import current_module, runtime, builder_stack
-from hydro.helpers import INT
-from hydro.lang_types import BaseMetatype, BoolType, Callable, IntType, ListType, ObjectType, TupleMetatype, TupleType, get_type, type_db
+from hydro.builders import current_module, builder_stack
+from hydro.helpers import INT, NULL
+from hydro.lang_types import BaseMetatype, BoolType, Callable, IntType, ListType, ObjectType, TupleMetatype, TupleType, VoidType, get_type, type_db
 from hydro.loggers import create_logger
-from hydro.parser.nodes import Array, Atom, Binary, Block, Call, ClassDecl, CustomStatement, Declaration, Expression, Grouping, Identifier, Literal, Member, Primary, Program, Slice, Span, Statement, Ternary, Tuple, Type, Unary, VarDecl, VarSet
+from hydro.parser.nodes import Array, Atom, Binary, Block, Call, ClassDecl, CustomStatement, Declaration, Expression, FunctionDecl, Grouping, Identifier, Literal, Member, Primary, Program, Slice, Span, Statement, Ternary, Tuple, TypeNode, Unary, VarDecl, VarSet
 from hydro.runtime import Runtime
 from src.hydro.tokens import Lexeme
 
@@ -17,7 +18,13 @@ logger = create_logger("Compiler")
 errors = create_logger("Compiler", False)
 
 
-Scope = dict[Lexeme, ObjectType]
+@dataclass
+class Header:
+    node: Declaration
+    inside: BaseMetatype | None
+
+
+Scope = dict[Lexeme, ObjectType | Header]
 
 
 class CompileError(RuntimeError):
@@ -78,15 +85,15 @@ class Compiler:
         self.push_scope()
 
         for decl in self.program.declarations:
-            self.declaration(decl)
+            self.declaration(decl, None)
 
         self.pop_scope()
 
-    def declaration(self, decl: Declaration):
+    def declaration(self, decl: Declaration, inside: BaseMetatype | None):
         if isinstance(decl, ClassDecl):
-            self.class_decl(decl)
-        if isinstance(decl, Function):
-            self.function(decl)
+            self.class_header(decl, inside)
+        if isinstance(decl, FunctionDecl):
+            self.function_header(decl, inside)
         if isinstance(decl, VarDecl):
             self.var_decl(decl)
         logger.error("Unexpected declaration type.")
@@ -124,15 +131,37 @@ class Compiler:
         self.pop_scope()
         self.builder.ret_void()
 
-    def class_decl(self, decl: ClassDecl) -> None:
+    def class_header(self, decl: ClassDecl, inside: BaseMetatype | None) -> None:
         if decl.name.raw in self.scope:
             raise CompileError(decl.name, "Class name already exists in the current scope.")
-        # TODO: Classes
+        self.scope[decl.name] = Header(decl, inside)
 
-    def function(self, fn: Function) -> None:
+    def function_header(self, fn: FunctionDecl, inside: BaseMetatype | None) -> None:
         if fn.name.raw in self.scope:
             raise CompileError(fn.name, "Name already exists in the current scope.")
-        # TODO: Functions
+        self.scope[fn.name] = Header(fn, inside)
+
+    def gen_function(self, header: Header, generics: list[TypeNode]) -> ObjectType:
+        node = header.node
+        assert isinstance(node, FunctionDecl)
+        if len(generics) != len(node.generics):
+            span = Span(generics[0].spans.start, generics[-1].spans.end)
+            raise CompileError(span, f"Length of generic arguments doesn't match expected count ({len(node.generics)})")
+
+        params: list[tuple[BaseMetatype, Lexeme]] = []
+        for param in node.params.pos:
+            params.append((self.get_type(param.typ), param.name))
+        returns = self.get_type(node.returns) if node.returns else get_type(VoidType)
+
+        ir_type = FunctionType(returns.storage_type, [param.storage_type for param, _ in params])
+        ir_function = Function(current_module, ir_type, node.name.raw)
+
+        # TODO: Function implementation
+
+        param_types = [param for param, _ in params]
+        function_type = get_type(Callable, param_types)
+
+        return Callable(ir_function, ir_type, function_type, param_types, returns)
 
     def var_decl(self, decl: VarDecl) -> None:
         typ = self.get_type(decl.typ)
@@ -151,19 +180,65 @@ class Compiler:
         logger.warning(f"Unkown statement '{stmt.name.raw}'. No code generated.")
 
     def if_stmt(self, stmt: CustomStatement) -> ObjectType | None:
-        pass
+        condition_node = stmt.expressions["condition"]
+        body_node = stmt.expressions["body"]
+        assert isinstance(condition_node, Expression)
+        assert isinstance(body_node, Block)
+
+        condition = self.expression(condition_node)
+        if not isinstance(condition, BoolType):
+            raise CompileError(condition_node.spans, f"Condition of if statement must evaluate to type 'Bool', but instead got type '{condition.typ}'")
+
+        truthy_block = self.builder.append_basic_block("if")
+        falsey_block = self.builder.append_basic_block("else")
+        continue_block = self.builder.append_basic_block("continue")
+        self.builder.cbranch(condition.get_raw(), truthy_block, falsey_block)
+
+        self.builder.position_at_start(truthy_block)
+        returns = self.block(body_node.stmts)
+        if returns is None:
+            self.builder.branch(continue_block)
+
+        self.builder.position_at_start(falsey_block)
+        if len(stmt.following) == 0:
+            self.builder.branch(continue_block)
+            self.builder.position_at_start(falsey_block)
+            return None # Cannot gurantee a return if if statement isn't exhaustive.
+
+        assert len(stmt.following) == 1
+        following = stmt.following[0]
+        if following.name == "elif":
+            returns = self.if_stmt(following) if returns else None
+        elif following.name == "else":
+            returns = self.else_stmt(following) if returns else None
+        else:
+            logger.error("Unexpected following statement after 'if'.")
+
+        if not returns:
+            self.builder.branch(continue_block)
+            self.builder.position_at_start(falsey_block)
+        return returns
 
     def else_stmt(self, stmt: CustomStatement) -> ObjectType | None:
-        pass
+        body_node = stmt.expressions["body"]
+        assert isinstance(body_node, Block)
+
+        return self.block(body_node.stmts)
 
     def while_stmt(self, stmt: CustomStatement) -> ObjectType | None:
         pass
 
-    def for_stmt(self, stmt: CustomStatement) -> ObjectType | None:
+    def for_stmt(self, stmt: CustomStatement) -> ObjectType:
         pass
 
     def return_stmt(self, stmt: CustomStatement) -> ObjectType:
-        pass
+        if "expression" not in stmt.expressions:
+            return VoidType()
+        expression = stmt.expressions["expression"]
+        assert isinstance(expression, Expression)
+        value = self.expression(expression)
+        self.builder.ret(value.value)
+        return value
 
     def var_set(self, stmt: VarSet) -> None:
         into = self.primary(stmt.into, True, "varset_into")
@@ -271,13 +346,17 @@ class Compiler:
         typ = get_type(ListType, [item_typ])
         return ListType.from_values(typ, values)
 
+    def get_header(self, header: Header) -> ObjectType:
+        pass
+
     def get_field(self, name: Lexeme) -> ObjectType:
         for scope in reversed(self.scopes):
             if name in scope:
-                return scope[name]
+                value = scope[name]
+                return value if isinstance(value, ObjectType) else self.get_header(value)
         raise CompileError(name, "Not found in current scope.")
 
-    def get_type(self, typ: Type) -> BaseMetatype:
+    def get_type(self, typ: TypeNode) -> BaseMetatype:
         if typ.name.raw not in self.headers:
             raise CompileError(typ.name, "Type not found in the current scope.")
         header = self.headers[typ.name.raw]

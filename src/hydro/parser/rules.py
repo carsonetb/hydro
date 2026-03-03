@@ -4,6 +4,7 @@ import typing
 from parser.interface import FullParser, ParserBase
 from parser.nodes import CustomStatement, Span
 from scanner import Position, Token
+from src.hydro.tokens import Lexeme
 
 Generator = typing.Callable[[FullParser], CustomStatement]
 
@@ -26,7 +27,7 @@ def else_generator(parser: FullParser) -> CustomStatement:
     span = parser.end_node()
     return CustomStatement(
         span,
-        "else",
+        Lexeme.make_id("else"),
         {
             "body": body,
         },
@@ -41,13 +42,13 @@ def if_generator(parser: FullParser, is_elif: bool = False) -> CustomStatement:
     body = parser.body()
     following: list[CustomStatement] = []
     if parser.match_kw("elif"):
-        following.append(if_generator(parser))
+        following = [if_generator(parser)]
     elif parser.match_kw("else"):
-        following.append(else_generator(parser))
+        following = [else_generator(parser)]
     span = parser.end_node()
     return CustomStatement(
         span,
-        "if" if not is_elif else "elif",
+        Lexeme.make_id("if") if not is_elif else Lexeme.make_id("elif"),
         {
             "condition": condition,
             "body": body,
@@ -65,7 +66,7 @@ def while_generator(parser: FullParser) -> CustomStatement:
     span = parser.end_node()
     return CustomStatement(
         span,
-        "while",
+        Lexeme.make_id("while"),
         {
             "condition": condition,
             "body": body,
@@ -85,7 +86,7 @@ def for_generator(parser: FullParser) -> CustomStatement:
     span = parser.end_node()
     return CustomStatement(
         span,
-        "for",
+        Lexeme.make_id("for"),
         {
             "type": typ,
             "name": name,
@@ -105,7 +106,7 @@ def return_generator(parser: FullParser) -> CustomStatement:
     span = parser.end_node()
     return CustomStatement(
         span,
-        "return",
+        Lexeme.make_id("return"),
         (
             {
                 "expression": expression,

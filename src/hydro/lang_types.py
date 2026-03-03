@@ -266,6 +266,13 @@ class ObjectType:
         return builder.gep(self.value, indices, name=f"{name}_mem")
 
 
+class VoidType(ObjectType):
+    NAME = "Void"
+
+    def __init__(self) -> None:
+        super().__init__(NULL, get_type(VoidType))
+
+
 @dataclass
 class VTableEntry:
     name: str

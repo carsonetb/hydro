@@ -5,7 +5,7 @@ from typing import Callable
 
 from hydro.loggers import create_logger
 from hydro.parser.interface import ParseError
-from hydro.parser.nodes import Annotation, Arguments, Array, Atom, Binary, Block, Call, ClassDecl, Declaration, DefaultParam, Expression, Function, Generic, Grouping, Identifier, Import, Literal, Member, Param, Parameters, Primary, Program, Slice, Span, Statement, Ternary, Tuple, Type, Unary, VarDecl, VarSet
+from hydro.parser.nodes import Annotation, Arguments, Array, Atom, Binary, Block, Call, ClassDecl, Declaration, DefaultParam, Expression, FunctionDecl, Generic, Grouping, Identifier, Import, Literal, Member, Param, Parameters, Primary, Program, Slice, Span, Statement, Ternary, Tuple, TypeNode, Unary, VarDecl, VarSet
 from hydro.parser.rules import FullParser, Rule
 from hydro.scanner import Lexeme, Scanner
 from hydro.tokens import Token
@@ -28,14 +28,14 @@ class Parser(FullParser):
         self.handled_imports = handled_imports
 
         logger.debug(f"Initialized parser at {file}.")
-    
+
     def parse(self) -> Program:
         self.process_imports()
 
         declarations: list[Declaration] = []
         while not self.match(Token.EOF):
             declarations.append(self.declaration())
-        
+
         logger.debug("Parser finished. Dispatching parsers to imports.")
 
         out = Program(self.file, [], declarations)
@@ -51,10 +51,10 @@ class Parser(FullParser):
             lexemes = scanner.scan_source()
             parser = Parser(self.srcdir, base, lexemes, self.rules, self.handled_imports | {str(base): out})
             imports.append(parser.parse())
-        
-        out.imports = imports 
+
+        out.imports = imports
         return out
-    
+
     def body(self) -> Block:
         self.begin_node()
         self.consume(Token.LEFT_CURLY, "Expected '{' to start a block.")
@@ -62,10 +62,10 @@ class Parser(FullParser):
         statements: list[Statement] = []
         while not self.match(Token.RIGHT_CURLY):
             statements.append(self.statement())
-        
+
         span = self.end_node()
         return Block(span, statements)
-    
+
     def declaration(self) -> Declaration:
         decltype = self.find_decltype()
         match decltype:
@@ -75,7 +75,7 @@ class Parser(FullParser):
                 return self.function_decl()
             case self.DeclType.CLASS:
                 return self.class_decl()
-    
+
     def statement(self) -> Statement:
         for rule in self.rules:
             if self.match_kw(rule.name):
@@ -86,10 +86,10 @@ class Parser(FullParser):
             return self.var_set()
         else:
             return self.expression()
-    
+
     def expression(self) -> Expression:
         return self.ternary()
-    
+
     def binary(self, ops: list[Token], lower: Callable[[], Expression]):
         self.begin_node(True)
         expr = lower()
@@ -110,19 +110,19 @@ class Parser(FullParser):
             falsey = self.expression()
             span = self.end_node()
             return Ternary(span, switch_or_expr, truthy, falsey)
-        
+
         self.end_node()
         return switch_or_expr
-    
+
     def disjunction(self) -> Expression:
         return self.binary([Token.PIPE_PIPE], self.conjunction)
-    
+
     def conjunction(self) -> Expression:
         return self.binary([Token.AND_AND], self.equality)
-    
+
     def equality(self) -> Expression:
         return self.binary([Token.EQUAL_EQUAL, Token.BANG_EQUAL], self.comparison)
-    
+
     def comparison(self) -> Expression:
         return self.binary(
             [
@@ -132,37 +132,37 @@ class Parser(FullParser):
             ],
             self.bitwise_or
         )
-    
+
     def bitwise_or(self) -> Expression:
         return self.binary([Token.PIPE], self.bitwise_xor)
-    
+
     def bitwise_xor(self) -> Expression:
         return self.binary([Token.CARET], self.bitwise_and)
-    
+
     def bitwise_and(self) -> Expression:
         return self.binary([Token.AND], self.shift_expr)
-    
+
     def shift_expr(self) -> Expression:
         return self.binary([Token.LEFT_ANGLE_ANGLE, Token.RIGHT_ANGLE_ANGLE], self.term)
-    
+
     def term(self) -> Expression:
         return self.binary([Token.PLUS, Token.MINUS], self.factor)
-    
+
     def factor(self) -> Expression:
         return self.binary([Token.STAR, Token.SLASH, Token.MODULO, Token.AT], self.unary)
-    
+
     def unary(self) -> Expression:
         if self.match([Token.BANG, Token.MINUS]):
             self.begin_node()
-            op = self.previous 
+            op = self.previous
             right = self.unary()
             span = self.end_node()
             return Unary(span, op, right)
         return self.power()
-    
+
     def power(self) -> Expression:
         return self.binary([Token.STAR_STAR], self.primary)
-    
+
     def primary(self, prefix: Primary | None = None) -> Primary:
         if prefix is not None:
             self.begin_node(True)
@@ -193,7 +193,7 @@ class Parser(FullParser):
         if self.check(Token.LEFT_BRACKET):
             return self.array()
         raise ParseError(self.peek(), "Expected identifier, int, float, string, character, boolean, '(', '{', '['")
-    
+
     def paren_expr(self) -> Atom:
         self.begin_node(True)
         if self.match(Token.RIGHT_PAREN):
@@ -206,7 +206,7 @@ class Parser(FullParser):
             self.consume(Token.COMMA, "Expected ',' or ')'.")
             values.append(self.expression())
             if self.match(Token.RIGHT_PAREN):
-                break 
+                break
         span = self.end_node()
         return Tuple(span, values)
 
@@ -218,11 +218,11 @@ class Parser(FullParser):
         while True:
             values.append(self.expression())
             if self.match(Token.RIGHT_PAREN):
-                break 
+                break
             self.consume(Token.COMMA, "Expected ',' or ')'.")
         span = self.end_node()
         return Array(span, values)
-    
+
     def var_set(self) -> VarSet:
         self.begin_node(True)
         into = self.primary()
@@ -230,7 +230,7 @@ class Parser(FullParser):
         value = self.expression()
         span = self.end_node()
         return VarSet(span, into, value)
-    
+
     def var_decl(self) -> VarDecl:
         self.begin_node(True)
         annotations: list[Annotation] = []
@@ -244,45 +244,45 @@ class Parser(FullParser):
         span = self.end_node()
         return VarDecl(span, typ, name, value)
 
-    def function_decl(self) -> Function:
+    def function_decl(self) -> FunctionDecl:
         self.begin_node(True)
-        
+
         annotations: list[Annotation] = []
         while not self.match(Token.FN_KW):
             annotations.append(self.annotation())
 
         name = self.consume(Token.IDENTIFIER, "Expected identifier after 'fn' keyword", "ERR00200")
         generics = self.generics_def()
-        
+
         if self.check(Token.LEFT_PAREN):
             params = self.parameters()
         else:
             params = Parameters(Span(self.position, self.position), [], [])
-        
+
         if self.match(Token.RETURNS):
             returns = self.typ()
         else:
             returns = None
-        
+
         if self.check(Token.LEFT_CURLY):
             body = self.body()
         else:
-            body = None 
-        
+            body = None
+
         span = self.end_node()
-        return Function(span, annotations, name, generics, params, returns, body)
+        return FunctionDecl(span, annotations, name, generics, params, returns, body)
 
     def class_decl(self) -> ClassDecl:
         self.begin_node(True)
-        
+
         annotations: list[Annotation] = []
         while not self.match(Token.CLASS_KW):
             annotations.append(self.annotation())
-        
+
         name = self.consume(Token.IDENTIFIER, "Expected identifier after 'class' keyword.")
         generics = self.generics_def()
 
-        inherits: list[Type] = []
+        inherits: list[TypeNode] = []
         if self.match(Token.COLON):
             if self.match(Token.LEFT_PAREN):
                 inherits.append(self.typ())
@@ -291,38 +291,38 @@ class Parser(FullParser):
                 self.consume(Token.RIGHT_PAREN, "Expected ')' to close inheritance list.")
             else:
                 inherits = [self.typ()]
-        
+
         if self.check(Token.LEFT_PAREN):
             params = self.parameters()
         else:
             params = Parameters(Span(self.position, self.position), [], [])
-        
+
         self.consume(Token.LEFT_CURLY, "Expected '{' after class arguments.")
         members: list[Declaration] = []
         while not self.match(Token.RIGHT_CURLY):
             members.append(self.declaration())
-        
+
         span = self.end_node()
         return ClassDecl(span, annotations, name, generics, inherits, params, members)
 
-    def typ(self) -> Type:
+    def typ(self) -> TypeNode:
         self.begin_node(True)
         name = self.consume(Token.IDENTIFIER, "Expected type name.")
-        generics: list[Type] = []
+        generics: list[TypeNode] = []
         if self.match(Token.LEFT_ANGLE):
             generics = [self.typ()]
             while self.match(Token.COMMA):
                 generics.append(self.typ())
             self.consume(Token.RIGHT_ANGLE, "Expected '>' or ',' after generics.")
         span = self.end_node()
-        return Type(span, name, generics)
+        return TypeNode(span, name, generics)
 
     def parameters(self) -> Parameters:
         self.begin_node(True)
 
         positionals: list[Param] = []
         defaults: list[DefaultParam] = []
-        
+
         while not self.check(Token.EQUAL, 3):
             self.begin_node(True)
             typ = self.typ()
@@ -331,7 +331,7 @@ class Parser(FullParser):
             positionals.append(Param(span, typ, name))
             if not self.match(Token.COMMA):
                 break
-        
+
         while not self.match(Token.RIGHT_PAREN):
             self.consume(Token.COMMA, "Expected ',' or ')' after parameter.")
             self.begin_node(True)
@@ -341,7 +341,7 @@ class Parser(FullParser):
             default = self.expression()
             span = self.end_node()
             defaults.append(DefaultParam(span, typ, name, default))
-        
+
         span = self.end_node()
         return Parameters(span, positionals, defaults)
 
@@ -354,32 +354,32 @@ class Parser(FullParser):
         while not self.check(Token.EQUAL, 2):
             positionals.append(self.expression())
             if not self.match(Token.COMMA):
-                break 
-        
+                break
+
         while not self.match(Token.RIGHT_PAREN):
             self.consume(Token.COMMA, "Expected ',' or ')' after argument.")
             name = self.consume(Token.IDENTIFIER, "Expected name of parameter for keyword argument.")
             self.consume(Token.EQUAL, "Expected '=' after keyword argument name.")
             kwargs[name] = self.expression()
-        
+
         span = self.end_node()
         return Arguments(span, positionals, kwargs)
-    
-    def generics(self) -> list[Type]:
+
+    def generics(self) -> list[TypeNode]:
         if not self.match(Token.LEFT_ANGLE):
             return []
-        
-        out: list[Type] = [self.typ()]
+
+        out: list[TypeNode] = [self.typ()]
         while not self.match(Token.RIGHT_ANGLE):
             self.consume(Token.COMMA, "Expected ',' or '>' to end generics.")
             out.append(self.typ())
-        
+
         return out
 
     def generics_def(self) -> list[Generic]:
         if not self.match(Token.LEFT_ANGLE):
             return []
-        
+
         out: list[Generic] = []
         while True:
             self.begin_node(True)
@@ -387,11 +387,11 @@ class Parser(FullParser):
             if self.match(Token.COLON):
                 inherits = self.consume(Token.IDENTIFIER, "Expected inherited type after ':'.")
             else:
-                inherits = None 
+                inherits = None
             span = self.end_node()
             out.append(Generic(span, name, inherits))
-            if self.match(Token.COMMA): 
-                continue 
+            if self.match(Token.COMMA):
+                continue
             break
         self.consume(Token.LEFT_ANGLE, "Expected '>' or ',' after generic.")
 
@@ -410,7 +410,7 @@ class Parser(FullParser):
         else:
             name = self.consume(Token.IDENTIFIER, "Expected annotation identifier.")
             args = Arguments(Span(self.position, self.position), [], {})
-        
+
         span = self.end_node()
         return Annotation(span, name, args)
 
@@ -419,7 +419,7 @@ class Parser(FullParser):
             if self.match(Token.AT):
                 self.annotation()
             elif self.match(Token.IDENTIFIER):
-                continue 
+                continue
             elif self.match(Token.LEFT_ANGLE) or self.match(Token.EQUAL):
                 return self.DeclType.VAR
             elif self.match(Token.FN_KW):

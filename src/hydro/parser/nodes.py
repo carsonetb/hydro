@@ -21,9 +21,9 @@ class Node(ABC):
 
 
 @dataclass
-class Type(Node):
+class TypeNode(Node):
     name: Lexeme
-    generics: list[Type]
+    generics: list[TypeNode]
 
     def __str__(self) -> str:
         return f"{self.name}<{",".join(str(generic) for generic in self.generics)}>"
@@ -49,13 +49,13 @@ class Annotation(Node):
 
 @dataclass
 class Param(Node):
-    typ: Type
+    typ: TypeNode
     name: Lexeme
 
 
 @dataclass
 class DefaultParam(Node):
-    typ: Type
+    typ: TypeNode
     name: Lexeme
     default: Expression
 
@@ -110,7 +110,7 @@ class Member(Primary):
 @dataclass
 class Call(Primary):
     on: Primary
-    generics: list[Type]
+    generics: list[TypeNode]
     args: Arguments
 
 
@@ -160,7 +160,7 @@ class Block(Atom):
 class CustomStatement(Statement):
     name: Lexeme
     expressions: dict[str, Expression | Lexeme]
-    following: Sequence[Statement] = []
+    following: Sequence[CustomStatement] = []
     internal: bool = True
 
 
@@ -182,18 +182,18 @@ class Import(Declaration):
 
 @dataclass
 class VarDecl(Declaration, Statement):
-    typ: Type
+    typ: TypeNode
     name: Lexeme
     value: Expression
 
 
 @dataclass
-class Function(Declaration):
+class FunctionDecl(Declaration):
     annotations: list[Annotation]
     name: Lexeme
     generics: list[Generic]
     params: Parameters
-    returns: Type | None
+    returns: TypeNode | None
     block: Block | None
 
 
@@ -202,7 +202,7 @@ class ClassDecl(Declaration):
     annotations: list[Annotation]
     name: Lexeme
     generics: list[Generic]
-    inherits: list[Type]
+    inherits: list[TypeNode]
     params: Parameters
     members: list[Declaration]
 
