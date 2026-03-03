@@ -28,7 +28,7 @@ logger = create_logger("Types")
 type_db: dict[str, BaseMetatype] = {}
 
 
-def get_type(base: type[ObjectType], generics: list[TypeRepr | BaseMetatype | list[TypeRepr]] = []) -> BaseMetatype:
+def get_type(base: type[ObjectType], generics: typing.Sequence[TypeRepr | BaseMetatype | list[TypeRepr]] = []) -> BaseMetatype:
     str_repr = str(TypeRepr(base, generics))
     if str_repr in type_db:
         return type_db[str_repr]
@@ -47,7 +47,7 @@ def get_type(base: type[ObjectType], generics: list[TypeRepr | BaseMetatype | li
 
 class TypeRepr:
     def __init__(
-        self, base: type[ObjectType], generics: list[TypeRepr | BaseMetatype | list[TypeRepr]] = []
+        self, base: type[ObjectType], generics: typing.Sequence[TypeRepr | BaseMetatype | list[TypeRepr]] = []
     ) -> None:
         self.base = base
         self.generics = generics
@@ -742,7 +742,49 @@ class ListType(ObjectType):
 
 
 class TupleType(ObjectType):
-    pass
+    def __init__(
+        self, value: Value,
+        typ: BaseMetatype,
+        allocate: bool = True,
+        reference: bool = False,
+        dbg_name: str = "unnamed_tuple"
+    ) -> None:
+        super().__init__(value, typ, allocate, reference, dbg_name)
+
+    @staticmethod
+    def from_values(typ: BaseMetatype, values: list[ObjectType]) -> TupleType:
+        # TODO: TupleType from_values
+        pass
+
+    @staticmethod
+    def create_metatype(db: dict[str, BaseMetatype], generics: list[BaseMetatype]) -> BaseMetatype:
+        assert len(generics) > 0
+        out = BaseMetatype(
+            TupleType,
+            TypeHeader(
+                "Tuple",
+                {
+                    str(i): generic for i, generic in enumerate(generics)
+                },
+                [get_type(ObjectType)],
+                {}
+            )
+        )
+
+        for i, generic in enumerate(generics):
+            out.add_parameter(str(i), generic)
+
+        out.finalize()
+        return out
+
+    @staticmethod
+    def member_builder(typ: BaseMetatype, params: list[ObjectType]) -> list[Value]:
+        # TODO: TupleType member builder
+        pass
+
+    @staticmethod
+    def get_initializer(metatype: BaseMetatype) -> Callable:
+        return ObjectType._initializer_builder(metatype, TupleType.member_builder)
 
 
 class DictType(ObjectType):

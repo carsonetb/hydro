@@ -6,7 +6,7 @@ from llvmlite.ir import Function, FunctionType, IRBuilder, Module
 import hydro.builders as builders
 from hydro.builders import current_module, runtime, builder_stack
 from hydro.helpers import INT
-from hydro.lang_types import BaseMetatype, BoolType, Callable, IntType, ObjectType, type_db
+from hydro.lang_types import BaseMetatype, BoolType, Callable, IntType, ObjectType, TupleMetatype, TupleType, get_type, type_db
 from hydro.loggers import create_logger
 from hydro.parser.nodes import Array, Atom, Binary, Block, Call, ClassDecl, CustomStatement, Declaration, Expression, Grouping, Identifier, Literal, Member, Primary, Program, Slice, Statement, Ternary, Tuple, Type, Unary, VarDecl, VarSet
 from hydro.runtime import Runtime
@@ -214,6 +214,10 @@ class Compiler:
 
     def gen_tuple(self, node: Tuple) -> ObjectType:
         assert len(node.values) > 0
+        values = [self.expression(value) for value in node.values]
+        generics = [value.typ for value in values]
+        typ = get_type(TupleType, generics)
+        return TupleType.from_values(typ, values)
 
     def array(self, array: Array) -> ObjectType:
         pass
