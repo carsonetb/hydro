@@ -13,7 +13,7 @@ class ParseError(RuntimeError):
     def __init__(self, lexeme: Lexeme | Span, msg: str, code: str = "-1") -> None:
         super().__init__()
         if isinstance(lexeme, Lexeme):
-            logger.error(f"[Parser] [{lexeme.pos}] [{lexeme}] {f"[{code}]" if code != "-1" else ""} {msg}")
+            logger.error(f"[{lexeme.pos}] [{lexeme}] {f"[{code}]" if code != "-1" else ""} {msg}")
         self.lexeme = lexeme
         self.msg = msg
         self.code = code
@@ -76,7 +76,7 @@ class ParserBase(ABC):
         else:
             if self.peek(amount).token in what:
                 self.advance()
-                return True 
+                return True
             return False
 
     def consume_kw(self, kw: str, err: str, code: str = "-1") -> Lexeme:

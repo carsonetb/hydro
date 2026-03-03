@@ -158,7 +158,7 @@ class Block(Atom):
 
 @dataclass
 class CustomStatement(Statement):
-    name: str
+    name: Lexeme
     expressions: dict[str, Expression | Lexeme]
     following: Sequence[Statement] = []
     internal: bool = True

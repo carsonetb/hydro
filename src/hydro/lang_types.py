@@ -738,7 +738,20 @@ class StringType(ObjectType):
 
 
 class ListType(ObjectType):
-    pass
+    def __init__(
+        self,
+        value: Value,
+        typ: BaseMetatype,
+        allocate: bool = True,
+        reference: bool = False,
+        dbg_name: str = "unnamed_object"
+    ) -> None:
+        super().__init__(value, typ, allocate, reference, dbg_name)
+
+    @staticmethod
+    def from_values(typ: BaseMetatype, values: list[ObjectType]) -> ListType:
+        # TODO: ListType from_values
+        pass
 
 
 class TupleType(ObjectType):

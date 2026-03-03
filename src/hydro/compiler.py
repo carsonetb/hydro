@@ -6,9 +6,9 @@ from llvmlite.ir import Function, FunctionType, IRBuilder, Module
 import hydro.builders as builders
 from hydro.builders import current_module, runtime, builder_stack
 from hydro.helpers import INT
-from hydro.lang_types import BaseMetatype, BoolType, Callable, IntType, ObjectType, TupleMetatype, TupleType, get_type, type_db
+from hydro.lang_types import BaseMetatype, BoolType, Callable, IntType, ListType, ObjectType, TupleMetatype, TupleType, get_type, type_db
 from hydro.loggers import create_logger
-from hydro.parser.nodes import Array, Atom, Binary, Block, Call, ClassDecl, CustomStatement, Declaration, Expression, Grouping, Identifier, Literal, Member, Primary, Program, Slice, Statement, Ternary, Tuple, Type, Unary, VarDecl, VarSet
+from hydro.parser.nodes import Array, Atom, Binary, Block, Call, ClassDecl, CustomStatement, Declaration, Expression, Grouping, Identifier, Literal, Member, Primary, Program, Slice, Span, Statement, Ternary, Tuple, Type, Unary, VarDecl, VarSet
 from hydro.runtime import Runtime
 from src.hydro.tokens import Lexeme
 
@@ -18,6 +18,16 @@ errors = create_logger("Compiler", False)
 
 
 Scope = dict[Lexeme, ObjectType]
+
+
+class CompileError(RuntimeError):
+    def __init__(self, lexeme: Lexeme | Span, msg: str, code: str = "-1") -> None:
+        super().__init__()
+        if isinstance(lexeme, Lexeme):
+            errors.error(f"[{lexeme.pos}] [{lexeme}] {f"[{code}]" if code != "-1" else ""} {msg}")
+        self.lexeme = lexeme
+        self.msg = msg
+        self.code = code
 
 
 class Compiler:
@@ -79,6 +89,7 @@ class Compiler:
             self.function(decl)
         if isinstance(decl, VarDecl):
             self.var_decl(decl)
+        logger.error("Unexpected declaration type.")
 
     def statement(self, stmt: Statement) -> ObjectType | None:
         if isinstance(stmt, VarDecl):
@@ -87,6 +98,7 @@ class Compiler:
             return self.custom_statement(stmt)
         if isinstance(stmt, VarSet):
             return self.var_set(stmt)
+        logger.error("Unexpected statement type.")
 
     def expression(self, expr: Expression, into_name: str = "unnamed_expression") -> ObjectType:
         if isinstance(expr, Ternary):
@@ -97,6 +109,7 @@ class Compiler:
             return self.binary(expr, into_name)
         if isinstance(expr, Primary):
             return self.primary(expr, False, into_name)
+        logger.error("Unexpected expression type.")
         assert False
 
     def block(self, stmts: list[Statement]) -> ObjectType | None:
@@ -112,21 +125,44 @@ class Compiler:
         self.builder.ret_void()
 
     def class_decl(self, decl: ClassDecl) -> None:
-        assert decl.name.raw not in self.scope
+        if decl.name.raw in self.scope:
+            raise CompileError(decl.name, "Class name already exists in the current scope.")
         # TODO: Classes
 
     def function(self, fn: Function) -> None:
-        assert fn.name.raw not in self.scope
+        if fn.name.raw in self.scope:
+            raise CompileError(fn.name, "Name already exists in the current scope.")
         # TODO: Functions
 
     def var_decl(self, decl: VarDecl) -> None:
         typ = self.get_type(decl.typ)
         assert decl.name.raw not in self.scope
         value = self.expression(decl.value, decl.name.raw)
-        assert typ.validate(value)
+        if not typ.validate(value):
+            raise CompileError(decl.value.spans, f"Expression evaluates to '{value.typ.name}' but expected '{typ.name}'.")
         self.scope[decl.name] = value
 
     def custom_statement(self, stmt: CustomStatement) -> ObjectType | None:
+        match stmt.name.raw:
+            case "if": return self.if_stmt(stmt)
+            case "while": return self.while_stmt(stmt)
+            case "for": return self.for_stmt(stmt)
+            case "return": return self.return_stmt(stmt)
+        logger.warning(f"Unkown statement '{stmt.name.raw}'. No code generated.")
+
+    def if_stmt(self, stmt: CustomStatement) -> ObjectType | None:
+        pass
+
+    def else_stmt(self, stmt: CustomStatement) -> ObjectType | None:
+        pass
+
+    def while_stmt(self, stmt: CustomStatement) -> ObjectType | None:
+        pass
+
+    def for_stmt(self, stmt: CustomStatement) -> ObjectType | None:
+        pass
+
+    def return_stmt(self, stmt: CustomStatement) -> ObjectType:
         pass
 
     def var_set(self, stmt: VarSet) -> None:
@@ -136,7 +172,8 @@ class Compiler:
 
     def ternary(self, ternary: Ternary, into_name: str = "unnamed_ternary") -> ObjectType:
         switch = self.expression(ternary.switch)
-        assert isinstance(switch, BoolType)
+        if not isinstance(switch, BoolType):
+            raise CompileError(ternary.switch.spans, "In a ternary, this expression must evaluate to type bool.")
         truthy = self.expression(ternary.truthy)
         falsey = self.expression(ternary.falsey)
         value = switch.get_raw()
@@ -168,6 +205,7 @@ class Compiler:
             return self.slice(primary, reference, into_name)
         if isinstance(primary, Atom):
             return self.atom(primary)
+        logger.error("Unexpected primary type.")
         assert False
 
     def member(self, member: Member, reference: bool = False, into_name: str = "unnamed_member") -> ObjectType:
@@ -176,7 +214,8 @@ class Compiler:
 
     def call(self, call: Call, reference: bool = False, into_name: str = "unnamed_call") -> ObjectType:
         on = self.primary(call.on, False, f"{into_name}_callon")
-        assert isinstance(on, Callable)
+        if not isinstance(on, Callable): # TODO: Check for () operator instead.
+            raise CompileError(call.spans, f"Type '{on.typ.name}' cannot be called.")
         generics = [self.get_type(generic) for generic in call.generics]
         args = [self.expression(arg) for arg in call.args.pos]
         # TODO: kwargs and generics
@@ -196,6 +235,7 @@ class Compiler:
             return self.grouping(atom)
         if isinstance(atom, Tuple):
             return self.gen_tuple(atom)
+        logger.error("Unexpected atom type.")
         assert False
 
     def identifier(self, id: Identifier) -> ObjectType:
@@ -207,26 +247,42 @@ class Compiler:
         if isinstance(literal.value, int):
             return IntType.from_literal(literal.value, dbg_name)
         # TODO: Rest of literals
+        logger.error("Unexpected literal type.")
         assert False
 
     def grouping(self, grouping: Grouping) -> ObjectType:
         return self.expression(grouping.expr)
 
     def gen_tuple(self, node: Tuple) -> ObjectType:
-        assert len(node.values) > 0
+        if len(node.values) == 0:
+            raise CompileError(node.spans, "Tuple types cannot be empty.")
         values = [self.expression(value) for value in node.values]
         generics = [value.typ for value in values]
         typ = get_type(TupleType, generics)
         return TupleType.from_values(typ, values)
 
     def array(self, array: Array) -> ObjectType:
-        pass
+        if len(array.values) == 0:
+            raise CompileError(array.spans, "Array cannot be empty (will be fixed with type inference).")
+        values = [self.expression(value) for value in array.values]
+        item_typ = values[0].typ
+        for value in values:
+            assert value.typ == item_typ
+        typ = get_type(ListType, [item_typ])
+        return ListType.from_values(typ, values)
 
     def get_field(self, name: Lexeme) -> ObjectType:
-        pass
+        for scope in reversed(self.scopes):
+            if name in scope:
+                return scope[name]
+        raise CompileError(name, "Not found in current scope.")
 
     def get_type(self, typ: Type) -> BaseMetatype:
-        pass
+        if typ.name.raw not in self.headers:
+            raise CompileError(typ.name, "Type not found in the current scope.")
+        header = self.headers[typ.name.raw]
+        generics = [self.get_type(generic) for generic in typ.generics]
+        return get_type(header, generics)
 
     def push_scope(self):
         self.scopes.append({})
