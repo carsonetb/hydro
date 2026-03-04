@@ -7,7 +7,7 @@ from llvmlite.ir.types import Type
 import hydro.builders as builders
 from hydro.builders import current_module, builder_stack
 from hydro.helpers import INT, NULL, POINTER
-from hydro.lang_types import BaseMetatype, BoolType, Callable, IntType, ListType, ObjectType, TupleMetatype, TupleType, VoidType, get_type, type_db
+from hydro.lang_types import BaseMetatype, BoolType, Callable, InstanceCallable, IntType, ListType, ObjectType, TupleMetatype, TupleType, VoidType, get_type, type_db
 from hydro.loggers import create_logger
 from hydro.parser.nodes import Array, Atom, Binary, Block, Call, ClassDecl, CustomStatement, Declaration, Expression, FunctionDecl, Grouping, Identifier, Literal, Member, Primary, Program, Slice, Span, Statement, Ternary, Tuple, TypeNode, Unary, VarDecl, VarSet
 from hydro.runtime import Runtime
@@ -21,7 +21,88 @@ errors = create_logger("Compiler", False)
 @dataclass
 class Header:
     node: Declaration
+    generics_num: int
+    params: list[BaseMetatype]
     inside: BaseMetatype | None
+
+
+class Implementations:
+    """
+    Represents multiple implementations of some function, either by
+    generics or different specified implementations.
+    """
+
+    def __init__(self, name: Lexeme) -> None:
+        self.name = name
+        self.headers: list[Header] = []
+        self.implementations: list[tuple[list[BaseMetatype], Callable]] = []
+
+    def add_impl(self, impl: Header) -> None:
+        self.headers.append(impl)
+
+    def has_impl(self, generics: list[BaseMetatype], args: list[BaseMetatype]) -> bool:
+        for impl_generics, impl in self.implementations:
+            if len(impl.params) != len(args) or len(impl_generics) != len(generics):
+                continue
+
+            same = True
+            for (param, arg), (generic_param, generic_arg) in zip(zip(impl.params, args), zip(impl_generics, generics)):
+                if not param.typ.validate(arg) or generic_param != generic_arg:
+                    same = False
+                    break
+            if not same:
+                continue
+
+            return True
+        return False
+
+    def get_requires_compile(self, generics: list[BaseMetatype], args: list[BaseMetatype]) -> Header | None:
+        if self.has_impl(generics, args):
+            return None
+
+        for header in self.headers:
+            assert isinstance(header.node, (FunctionDecl, ClassDecl))
+            if header.generics_num != len(generics) or len(header.params) != len(args):
+                continue
+
+            valid = True
+            for param, arg in zip(header.params, args):
+                if param != arg:
+                    valid = False
+                    break
+            if not valid:
+                continue
+
+            return header
+
+        raise RuntimeError("No available implementation for function found.")
+
+    def call(
+        self,
+        generics: list[BaseMetatype],
+        arguments: list[ObjectType],
+        reference: bool = False,
+        var_name: str = "unknown_callable",
+    ) -> ObjectType:
+        if not self.has_impl(generics, [arg.typ for arg in arguments]):
+            raise RuntimeError("Need to check for and provide an implementation for function.")
+
+        for generics, impl in self.implementations:
+            if len(impl.params) != len(arguments):
+                continue
+
+            same = True
+            for param, arg in zip(impl.params, arguments):
+                if not param.typ.validate(arg):
+                    same = False
+                    break
+
+            if not same:
+                continue
+
+            return impl.call(arguments, reference, var_name)
+
+        raise RuntimeError("No available implementation for function found.")
 
 
 Scope = dict[Lexeme, ObjectType | Header]
@@ -358,8 +439,8 @@ class Compiler:
         logger.error("Unexpected atom type.")
         assert False
 
-    def identifier(self, id: Identifier) -> ObjectType:
-        return self.get_field(id.text)
+    def identifier(self, id: Identifier, generics: list[TypeNode] = []) -> ObjectType:
+        return self.get_field(id.text, generics)
 
     def literal(self, literal: Literal, dbg_name: str = "unnamed_literal") -> ObjectType:
         if isinstance(literal.value, bool):

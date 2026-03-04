@@ -1237,36 +1237,3 @@ class AnonymousCallable(Callable):
     #         )
     #     )
     #     typ.add_member("call", call_type)
-
-
-class CallableGroup:
-    """
-    Represents multiple functions which have the same name and return
-    type.
-    """
-
-    def __init__(self, implementations: list[Callable]) -> None:
-        self.implementations = implementations
-
-    def call(
-        self,
-        arguments: list[ObjectType],
-        reference: bool = False,
-        var_name: str = "unknown_callable",
-    ) -> ObjectType:
-        for impl in self.implementations:
-            if len(impl.params) != len(arguments):
-                continue
-
-            same = True
-            for param, arg in zip(impl.params, arguments):
-                if not param.typ.validate(arg):
-                    same = False
-                    break
-
-            if not same:
-                continue
-
-            return impl.call(arguments, reference, var_name)
-
-        raise RuntimeError("No available implementation for function found.")
