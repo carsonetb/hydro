@@ -20,6 +20,7 @@ from llvmlite.ir import (
 from hydro.builders import builder_stack, current_module, runtime
 from hydro.helpers import BOOL, LONG, NULL, POINTER, INT, arith_function, functions_into_struct, get_type_size, cmp_function
 from hydro.loggers import create_logger
+from src.hydro.compiler import Scope
 
 
 logger = create_logger("Types")
@@ -28,7 +29,7 @@ logger = create_logger("Types")
 type_db: dict[str, BaseMetatype] = {}
 
 
-def get_type(base: type[ObjectType], generics: typing.Sequence[TypeRepr | BaseMetatype | list[TypeRepr]] = []) -> BaseMetatype:
+def get_type(base: type[ObjectType], generics: typing.Sequence[TypeRepr | BaseMetatype | typing.Sequence[TypeRepr | BaseMetatype]] = []) -> BaseMetatype:
     str_repr = str(TypeRepr(base, generics))
     if str_repr in type_db:
         return type_db[str_repr]
@@ -144,6 +145,12 @@ class ObjectType:
     @property
     def storage_type(self) -> Type:
         return self.typ.llvm_type.as_pointer() if self.IS_REFCOUNTED else self.typ.llvm_type
+
+    def extract_values(self, into: Scope) -> None:
+        """
+        Extracts all members (public and private) into scope.
+        """
+        # TODO: BaseMetatype extract_values.
 
     def has_member(self, name: str) -> bool:
         return self.typ.has_member(name)

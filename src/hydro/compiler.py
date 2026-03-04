@@ -7,7 +7,7 @@ from llvmlite.ir.types import Type
 import hydro.builders as builders
 from hydro.builders import current_module, builder_stack
 from hydro.helpers import INT, NULL
-from hydro.lang_types import BaseMetatype, BoolType, Callable, IntType, ListType, ObjectType, TupleMetatype, TupleType, VoidType, get_type, type_db
+from hydro.lang_types import BaseMetatype, BoolType, Callable, InstanceCallable, IntType, ListType, ObjectType, TupleMetatype, TupleType, VoidType, get_type, type_db
 from hydro.loggers import create_logger
 from hydro.parser.nodes import Array, Atom, Binary, Block, Call, ClassDecl, CustomStatement, Declaration, Expression, FunctionDecl, Grouping, Identifier, Literal, Member, Primary, Program, Slice, Span, Statement, Ternary, Tuple, TypeNode, Unary, VarDecl, VarSet
 from hydro.runtime import Runtime
@@ -141,7 +141,38 @@ class Compiler:
             raise CompileError(fn.name, "Name already exists in the current scope.")
         self.scope[fn.name] = Header(fn, inside)
 
-    def gen_function(self, header: Header, generics: list[TypeNode]) -> ObjectType:
+    def gen_member_function(self, header: Header, generics: list[TypeNode]) -> ObjectType:
+        assert header.inside is not None
+
+        node = header.node
+
+        assert isinstance(node, FunctionDecl)
+        if len(generics) != len(node.generics):
+            span = Span(generics[0].spans.start, generics[-1].spans.end)
+            raise CompileError(span, f"Length of generic arguments doesn't match expected count ({len(node.generics)})")
+
+        params: list[tuple[BaseMetatype, Lexeme]] = []
+        returns = self.get_type(node.returns) if node.returns else get_type(VoidType)
+
+        ir_type = FunctionType(returns.storage_type, [header.inside.storage_type] + [param.storage_type for param, _ in params])
+        ir_function = Function(current_module, ir_type, node.name.raw)
+
+        block = ir_function.append_basic_block("entry")
+        builder_stack.append(IRBuilder(block))
+        self.push_scope()
+
+        obj = header.inside.bound.from_value(ir_function.args[0], header.inside)
+        obj.extract_values(self.scope)
+
+        for (typ, name), value in zip(params, ir_function.args):
+            self.scope[name] = typ.bound.from_value(value, typ)
+
+        assert obj is not None
+        param_types = [param for param, _ in params[1:]]
+        function_type = get_type(InstanceCallable, [header.inside, param_types, returns])
+        return InstanceCallable(ir_function, ir_type, function_type, obj, param_types, returns, set())
+
+    def gen_static_function(self, header: Header, generics: list[TypeNode]) -> ObjectType:
         node = header.node
         assert isinstance(node, FunctionDecl)
         if len(generics) != len(node.generics):
@@ -156,11 +187,15 @@ class Compiler:
         ir_type = FunctionType(returns.storage_type, [param.storage_type for param, _ in params])
         ir_function = Function(current_module, ir_type, node.name.raw)
 
-        # TODO: Function implementation
+        block = ir_function.append_basic_block("entry")
+        builder_stack.append(IRBuilder(block))
+        self.push_scope()
+
+        for (typ, name), value in zip(params, ir_function.args):
+            self.scope[name] = typ.bound.from_value(value, typ)
 
         param_types = [param for param, _ in params]
-        function_type = get_type(Callable, param_types)
-
+        function_type = get_type(Callable, [param_types, returns])
         return Callable(ir_function, ir_type, function_type, param_types, returns)
 
     def var_decl(self, decl: VarDecl) -> None:
@@ -346,14 +381,23 @@ class Compiler:
         typ = get_type(ListType, [item_typ])
         return ListType.from_values(typ, values)
 
-    def get_header(self, header: Header) -> ObjectType:
-        pass
+    def get_header(self, header: Header, generics: list[TypeNode]) -> ObjectType:
+        if isinstance(header.node, FunctionDecl):
+            return self.gen_member_function(header, generics) if header.inside else self.gen_static_function(header, generics)
+        if isinstance(header.node, ClassDecl):
+            pass
+        assert False
 
-    def get_field(self, name: Lexeme) -> ObjectType:
+    def get_field(self, name: Lexeme, generics: list[TypeNode]) -> ObjectType:
         for scope in reversed(self.scopes):
             if name in scope:
                 value = scope[name]
-                return value if isinstance(value, ObjectType) else self.get_header(value)
+                assert not (len(generics) > 0 and isinstance(value, ObjectType))
+                if isinstance(value, Header):
+                    obj = self.get_header(value, generics)
+                    if len(generics) == 0: # TODO: Save each generic implementation somehow.
+                        scope[name] = obj
+                return value if isinstance(value, ObjectType) else self.get_header(value, generics)
         raise CompileError(name, "Not found in current scope.")
 
     def get_type(self, typ: TypeNode) -> BaseMetatype:
