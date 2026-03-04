@@ -6,7 +6,7 @@ from llvmlite.ir.types import Type
 
 import hydro.builders as builders
 from hydro.builders import current_module, builder_stack
-from hydro.helpers import INT, NULL
+from hydro.helpers import INT, NULL, POINTER
 from hydro.lang_types import BaseMetatype, BoolType, Callable, IntType, ListType, ObjectType, TupleMetatype, TupleType, VoidType, get_type, type_db
 from hydro.loggers import create_logger
 from hydro.parser.nodes import Array, Atom, Binary, Block, Call, ClassDecl, CustomStatement, Declaration, Expression, FunctionDecl, Grouping, Identifier, Literal, Member, Primary, Program, Slice, Span, Statement, Ternary, Tuple, TypeNode, Unary, VarDecl, VarSet
@@ -246,12 +246,15 @@ class Compiler:
         into.set_to(value)
 
     def ternary(self, ternary: Ternary, into_name: str = "unnamed_ternary") -> ObjectType:
-        switch = self.expression(ternary.switch)
+        switch = self.expression(ternary.switch, f"{into_name}_switch")
         if not isinstance(switch, BoolType):
             raise CompileError(ternary.switch.spans, "In a ternary, this expression must evaluate to type bool.")
-        truthy = self.expression(ternary.truthy)
-        falsey = self.expression(ternary.falsey)
+        truthy = self.expression(ternary.truthy, f"{into_name}_truthy")
+        falsey = self.expression(ternary.falsey, f"{into_name}_falsey")
+        assert truthy.typ == falsey.typ
+
         value = switch.get_raw()
+        out_mem = self.builder.alloca(POINTER, name=f"{into_name}_ternary_res")
 
         truthy_block = self.builder.append_basic_block(f"ternary_{into_name}_truthy")
         falsey_block = self.builder.append_basic_block(f"ternary_{into_name}_falsey")
@@ -260,7 +263,14 @@ class Compiler:
         self.builder.cbranch(value, truthy_block, falsey_block)
 
         self.builder.position_at_start(truthy_block)
-        # TODO: bah ternary
+        self.builder.store(truthy.value, out_mem)
+        self.builder.branch(continued_block)
+
+        self.builder.position_at_start(falsey_block)
+        self.builder.store(falsey.value, out_mem)
+        self.builder.branch(continued_block)
+
+        return truthy.typ.from_value(out_mem, truthy.typ, name=into_name)
 
     def unary(self, unary: Unary, into_name: str = "unnamed_unary") -> ObjectType:
         right = self.expression(unary.right, f"{into_name}_opright")
