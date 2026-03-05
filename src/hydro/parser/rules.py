@@ -1,10 +1,11 @@
 from __future__ import annotations
 from dataclasses import dataclass
 import typing
-from parser.interface import FullParser, ParserBase
-from parser.nodes import CustomStatement, Span
-from scanner import Position, Token
-from src.hydro.tokens import Lexeme
+
+from hydro.parser.interface import FullParser
+from hydro.parser.nodes import CustomStatement
+from hydro.scanner import Token
+from hydro.tokens import Lexeme
 
 Generator = typing.Callable[[FullParser], CustomStatement]
 
@@ -121,14 +122,14 @@ def continue_generator(parser: FullParser) -> CustomStatement:
     parser.begin_node()
     parser.consume(Token.SEMICOLON, "Expected ';' after 'continue' statement.")
     span = parser.end_node()
-    return CustomStatement(span, "continue", {})
+    return CustomStatement(span, Lexeme.make_id("continue"), {})
 
 
 def break_generator(parser: FullParser) -> CustomStatement:
     parser.begin_node()
     parser.consume(Token.SEMICOLON, "Expected ';' after 'break' statement.")
     span = parser.end_node()
-    return CustomStatement(span, "break", {})
+    return CustomStatement(span, Lexeme.make_id("break"), {})
 
 
 BUILTIN_RULES = [

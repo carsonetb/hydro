@@ -1,9 +1,10 @@
 from __future__ import annotations
 from abc import ABC
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Sequence
-from tokens import Lexeme, Position, Token
+
+from hydro.tokens import Lexeme, Position
 
 
 @dataclass
@@ -160,7 +161,7 @@ class Block(Atom):
 class CustomStatement(Statement):
     name: Lexeme
     expressions: dict[str, Expression | Lexeme]
-    following: Sequence[CustomStatement] = []
+    following: Sequence[CustomStatement] = field(default_factory=list)
     internal: bool = True
 
 

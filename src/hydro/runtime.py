@@ -3,7 +3,6 @@ from importlib.resources import as_file, files
 import subprocess
 import llvmlite.binding as llvm
 
-from hydro.helpers import CHAR, LONG, POINTER, INT, VOID, BOOL
 from hydro.loggers import create_logger
 
 
@@ -34,6 +33,8 @@ class Runtime:
     RC_HEADER_SIZE = 4  # bytes
 
     def __init__(self, module: ir.Module) -> None:
+        from hydro.helpers import CHAR, LONG, POINTER, INT, VOID, BOOL
+
         self.module = module
 
         # void* malloc(size_t size)
@@ -175,3 +176,7 @@ class Runtime:
 
 if __name__ == "__main__":
     load_hashmap()
+
+current_module: ir.Module = ir.Module()
+runtime = Runtime(current_module)
+builder_stack: list[ir.IRBuilder] = []

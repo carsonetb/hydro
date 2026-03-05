@@ -3,8 +3,6 @@ from llvmlite import ir
 import llvmlite.binding as llvm
 from llvmlite.ir.types import IntType
 
-from hydro.builders import builder_stack, runtime
-
 BOOL: IntType = ir.IntType(1)
 CHAR: IntType = ir.IntType(8)
 INT: IntType = ir.IntType(32)
@@ -17,9 +15,11 @@ NULL: ir.Constant = POINTER(None)
 
 
 def rcallocate(typ: ir.Type) -> ir.Value:
+    from hydro.runtime import runtime, builder_stack
+
     builder = builder_stack[-1]
-    struct_mem = builder.call(runtime.rc_alloc_func, [INT(get_type_size(typ.llvm_type))], "struct_mem")
-    return builder.bitcast(struct_mem, typ.llvm_type, "struct_ptr") # type: ignore
+    struct_mem = builder.call(runtime.rc_alloc_func, [INT(get_type_size(typ))], "struct_mem")
+    return builder.bitcast(struct_mem, typ, "struct_ptr") # type: ignore
 
 def cmp_function(
     module: ir.Module, class_name: str, cmpop: str, lhs: ir.Type, rhs: ir.Type

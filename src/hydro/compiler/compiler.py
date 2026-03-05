@@ -4,26 +4,14 @@ import llvmlite.binding as llvm
 from llvmlite.ir import Function, FunctionType, IRBuilder, Module
 from llvmlite.ir.types import Type
 
-import hydro.builders as builders
-from hydro.builders import current_module, builder_stack
+import hydro.runtime as builders
+from hydro.runtime import current_module, builder_stack
 from hydro.helpers import INT, NULL, POINTER
 from hydro.lang_types import BaseMetatype, BoolType, Callable, InstanceCallable, IntType, ListType, ObjectType, TupleMetatype, TupleType, VoidType, get_type, type_db
-from hydro.loggers import create_logger
 from hydro.parser.nodes import Array, Atom, Binary, Block, Call, ClassDecl, CustomStatement, Declaration, Expression, FunctionDecl, Grouping, Identifier, Literal, Member, Primary, Program, Slice, Span, Statement, Ternary, Tuple, TypeNode, Unary, VarDecl, VarSet
 from hydro.runtime import Runtime
-from src.hydro.tokens import Lexeme
-
-
-logger = create_logger("Compiler")
-errors = create_logger("Compiler", False)
-
-
-@dataclass
-class Header:
-    node: Declaration
-    generics_num: int
-    params: list[BaseMetatype]
-    inside: BaseMetatype | None
+from hydro.tokens import Lexeme
+from hydro.compiler.interface import Header, Scope, logger, CompileError, CompilerBase
 
 
 class Implementations:
@@ -62,7 +50,7 @@ class Implementations:
 
         for header in self.headers:
             assert isinstance(header.node, (FunctionDecl, ClassDecl))
-            if header.generics_num != len(generics) or len(header.params) != len(args):
+            if len(header.generics) != len(generics) or len(header.params) != len(args):
                 continue
 
             valid = True
@@ -105,25 +93,10 @@ class Implementations:
         raise RuntimeError("No available implementation for function found.")
 
 
-Scope = dict[Lexeme, ObjectType | Header]
-
-
-class CompileError(RuntimeError):
-    def __init__(self, lexeme: Lexeme | Span, msg: str, code: str = "-1") -> None:
-        super().__init__()
-        if isinstance(lexeme, Lexeme):
-            errors.error(f"[{lexeme.pos}] [{lexeme}] {f"[{code}]" if code != "-1" else ""} {msg}")
-        self.lexeme = lexeme
-        self.msg = msg
-        self.code = code
-
-
-class Compiler:
+class Compiler(CompilerBase):
     def __init__(self, program: Program, build_dir: Path) -> None:
-        logger.debug(f"Starting compiler for {program.path}. Building into {build_dir}")
+        super().__init__(program, build_dir)
 
-        self.program = program
-        self.build_dir = build_dir
         self.scopes: list[Scope] = [{}]
         self.headers: dict[str, type[ObjectType]] = {
             "Bool": BoolType,
@@ -152,10 +125,6 @@ class Compiler:
     def builder(self) -> IRBuilder:
         return builder_stack[-1]
 
-    @property
-    def module_name(self) -> str:
-        return self.program.path.stem
-
     def gen_program(self) -> None:
         logger.info(f"Compiling {self.program.path}")
 
@@ -179,14 +148,17 @@ class Compiler:
             self.var_decl(decl)
         logger.error("Unexpected declaration type.")
 
-    def statement(self, stmt: Statement) -> ObjectType | None:
+    def statement(self, stmt: Statement) -> ObjectType:
         if isinstance(stmt, VarDecl):
-            return self.var_decl(stmt)
+            self.var_decl(stmt)
+            return VoidType()
         if isinstance(stmt, CustomStatement):
             return self.custom_statement(stmt)
         if isinstance(stmt, VarSet):
-            return self.var_set(stmt)
+            self.var_set(stmt)
+            return VoidType()
         logger.error("Unexpected statement type.")
+        return VoidType()
 
     def expression(self, expr: Expression, into_name: str = "unnamed_expression") -> ObjectType:
         if isinstance(expr, Ternary):
@@ -215,12 +187,22 @@ class Compiler:
     def class_header(self, decl: ClassDecl, inside: BaseMetatype | None) -> None:
         if decl.name.raw in self.scope:
             raise CompileError(decl.name, "Class name already exists in the current scope.")
-        self.scope[decl.name] = Header(decl, inside)
+        self.scope[decl.name] = Header(
+            decl,
+            [get_type(self.headers[generic.inherits.raw]) if generic.inherits else get_type(ObjectType) for generic in decl.generics],
+            [self.get_type(param.typ) for param in decl.params.pos],
+            inside
+        )
 
     def function_header(self, fn: FunctionDecl, inside: BaseMetatype | None) -> None:
         if fn.name.raw in self.scope:
             raise CompileError(fn.name, "Name already exists in the current scope.")
-        self.scope[fn.name] = Header(fn, inside)
+        self.scope[fn.name] = Header(
+            fn,
+            [get_type(self.headers[generic.inherits.raw]) if generic.inherits else get_type(ObjectType) for generic in fn.generics],
+            [self.get_type(param.typ) for param in fn.params.pos],
+            inside
+        )
 
     def gen_member_function(self, header: Header, generics: list[TypeNode]) -> ObjectType:
         assert header.inside is not None
@@ -287,15 +269,16 @@ class Compiler:
             raise CompileError(decl.value.spans, f"Expression evaluates to '{value.typ.name}' but expected '{typ.name}'.")
         self.scope[decl.name] = value
 
-    def custom_statement(self, stmt: CustomStatement) -> ObjectType | None:
+    def custom_statement(self, stmt: CustomStatement) -> ObjectType:
         match stmt.name.raw:
             case "if": return self.if_stmt(stmt)
             case "while": return self.while_stmt(stmt)
             case "for": return self.for_stmt(stmt)
             case "return": return self.return_stmt(stmt)
         logger.warning(f"Unkown statement '{stmt.name.raw}'. No code generated.")
+        return VoidType()
 
-    def if_stmt(self, stmt: CustomStatement) -> ObjectType | None:
+    def if_stmt(self, stmt: CustomStatement) -> ObjectType:
         condition_node = stmt.expressions["condition"]
         body_node = stmt.expressions["body"]
         assert isinstance(condition_node, Expression)
@@ -319,7 +302,7 @@ class Compiler:
         if len(stmt.following) == 0:
             self.builder.branch(continue_block)
             self.builder.position_at_start(falsey_block)
-            return None # Cannot gurantee a return if if statement isn't exhaustive.
+            return VoidType() # Cannot gurantee a return if if statement isn't exhaustive.
 
         assert len(stmt.following) == 1
         following = stmt.following[0]
@@ -333,7 +316,7 @@ class Compiler:
         if not returns:
             self.builder.branch(continue_block)
             self.builder.position_at_start(falsey_block)
-        return returns
+        return returns if returns else VoidType()
 
     def else_stmt(self, stmt: CustomStatement) -> ObjectType | None:
         body_node = stmt.expressions["body"]
@@ -341,11 +324,11 @@ class Compiler:
 
         return self.block(body_node.stmts)
 
-    def while_stmt(self, stmt: CustomStatement) -> ObjectType | None:
-        pass
+    def while_stmt(self, stmt: CustomStatement) -> ObjectType:
+        return VoidType()
 
     def for_stmt(self, stmt: CustomStatement) -> ObjectType:
-        pass
+        return VoidType()
 
     def return_stmt(self, stmt: CustomStatement) -> ObjectType:
         if "expression" not in stmt.expressions:
@@ -390,12 +373,12 @@ class Compiler:
 
     def unary(self, unary: Unary, into_name: str = "unnamed_unary") -> ObjectType:
         right = self.expression(unary.right, f"{into_name}_opright")
-        return right.call_on(unary.op.raw, [], [], into_name=into_name)
+        return right.call_on(unary.op, [], into_name=into_name)
 
     def binary(self, binary: Binary, into_name: str = "unnamed_binary") -> ObjectType:
         left = self.expression(binary.left, f"{into_name}_opleft")
         right = self.expression(binary.right, f"{into_name}_opright")
-        return left.call_on(binary.op.raw, [], [right], into_name=into_name)
+        return left.call_on(binary.op, [right], into_name=into_name)
 
     def primary(self, primary: Primary, reference: bool = False, into_name: str = "unnamed_primary") -> ObjectType:
         if isinstance(primary, Member):
@@ -411,7 +394,7 @@ class Compiler:
 
     def member(self, member: Member, reference: bool = False, into_name: str = "unnamed_member") -> ObjectType:
         on = self.primary(member.on, False, f"{into_name}_geton")
-        return on.get_member(member.name.raw, reference, into_name)
+        return on.get_member(member.name, reference, into_name)
 
     def call(self, call: Call, reference: bool = False, into_name: str = "unnamed_call") -> ObjectType:
         on = self.primary(call.on, False, f"{into_name}_callon")
@@ -425,7 +408,7 @@ class Compiler:
     def slice(self, slice: Slice, reference: bool = False, into_name: str = "unnamed_slice") -> ObjectType:
         on = self.primary(slice.on, False, f"{into_name}_sliced")
         using = self.expression(slice.using)
-        return on.call_on("[]", [], [using], reference, into_name)
+        return on.call_on(Lexeme.make_id("[]"), [using], reference, into_name)
 
     def atom(self, atom: Atom) -> ObjectType:
         if isinstance(atom, Identifier):

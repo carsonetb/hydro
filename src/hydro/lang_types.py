@@ -20,7 +20,9 @@ from llvmlite.ir import (
 from hydro.builders import builder_stack, current_module, runtime
 from hydro.helpers import BOOL, LONG, NULL, POINTER, INT, arith_function, functions_into_struct, get_type_size, cmp_function
 from hydro.loggers import create_logger
-from src.hydro.compiler import Scope
+from hydro.compiler.interface import CompileError
+from hydro.tokens import Lexeme
+from src.hydro.compiler.compiler import Scope
 
 
 logger = create_logger("Types")
@@ -36,8 +38,8 @@ def get_type(base: type[ObjectType], generics: typing.Sequence[TypeRepr | BaseMe
 
     metatype_generics: list[BaseMetatype] = []
     for generic in generics:
-        if isinstance(generic, list):
-            metatype_generics.append(TupleMetatype(*[get_type(sub.base, sub.generics) for sub in generic]))
+        if isinstance(generic, typing.Sequence):
+            metatype_generics.append(TupleMetatype(*[get_type(sub.base, sub.generics) if isinstance(sub, TypeRepr) else sub for sub in generic]))
         else:
             metatype_generics.append(get_type(generic.base, generic.generics) if isinstance(generic, TypeRepr) else generic)
 
@@ -48,7 +50,7 @@ def get_type(base: type[ObjectType], generics: typing.Sequence[TypeRepr | BaseMe
 
 class TypeRepr:
     def __init__(
-        self, base: type[ObjectType], generics: typing.Sequence[TypeRepr | BaseMetatype | list[TypeRepr]] = []
+        self, base: type[ObjectType], generics: typing.Sequence[TypeRepr | BaseMetatype | typing.Sequence[TypeRepr | BaseMetatype]] = []
     ) -> None:
         self.base = base
         self.generics = generics
@@ -155,7 +157,7 @@ class ObjectType:
     def has_member(self, name: str) -> bool:
         return self.typ.has_member(name)
 
-    def get_member(self, name: str, reference: bool = False, into_name: str = "unnamed_object") -> ObjectType:
+    def get_member(self, name: Lexeme, reference: bool = False, into_name: str = "unnamed_object") -> ObjectType:
         """
         Gets a member by name from the internal struct.
 
@@ -166,7 +168,7 @@ class ObjectType:
         builder = builder_stack[-1]
         builder.comment(f"Load value named '{name}' from '{self.name}'")
         assert name in self.members
-        member = self.members[name]
+        member = self.members[name.raw]
         internal_mem = self._get_index(member.struct_index, into_name)
         internal_ptr: CastInstr = builder.bitcast(internal_mem, member.typ.llvm_type.as_pointer(), f"{into_name}_ptr")  # type: ignore
         return member.typ.bound.from_value(internal_ptr, member.typ, reference, into_name)
@@ -176,9 +178,11 @@ class ObjectType:
         # TODO: set_to implementation
         pass
 
-    def call_on(self, name: str, generics: list[BaseMetatype], arguments: list[ObjectType], reference: bool = False, into_name: str = "unnamed_object") -> ObjectType:
-        # TODO: call_on implementation
-        pass
+    def call_on(self, name: Lexeme, arguments: list[ObjectType], reference: bool = False, into_name: str = "unnamed_object") -> ObjectType:
+        member = self.get_member(name)
+        if not isinstance(member, Callable):
+            raise CompileError(name, f"Member variable '{self.typ.generic_name}.{name}' has type '{member.typ.generic_name}' which is not callable.")
+        return member.call(arguments, reference, into_name)
 
     @staticmethod
     def create_metatype(db: dict[str, BaseMetatype], generics: list[BaseMetatype]) -> BaseMetatype:
@@ -246,7 +250,7 @@ class ObjectType:
 
         if metatype.has_member("init"):
             builder.comment("Call user created init function.")
-            init = metatype.get_member("init", into_name="init_func")  # This is the static function.
+            init = metatype.get_member(Lexeme.make_id("init"), into_name="init_func")  # This is the static function.
             assert isinstance(init, Callable)
             init.call([as_object])
 
@@ -376,10 +380,9 @@ class BaseMetatype(ObjectType):
     def has_member(self, name: str) -> bool:
         return name in self.static_members
 
-    def get_member(self, name: str, reference: bool = False, into_name: str = "unnamed_object") -> ObjectType:
-        # TODO: This probably looks really weird in the IR.
-        assert name in self.static_members
-        return self.static_members[name]
+    def get_member(self, name: Lexeme, reference: bool = False, into_name: str = "unnamed_object") -> ObjectType:
+        # TODO: get_member implementation on BaseMetatype
+        return VoidType()
 
     def add_parameter(self, name: str, typ: BaseMetatype) -> None:
         info = MemberInfo(typ, len(self.struct))
@@ -576,7 +579,8 @@ class BoolType(ObjectType):
         }
 
     def get_raw(self) -> Value:
-        pass
+        builder = builder_stack[-1]
+        return builder.gep(self.value, [INT(0), INT(0)])
 
     @staticmethod
     def from_literal(value: bool, dbg_name: str = "unnamed_bool") -> BoolType:
@@ -764,6 +768,7 @@ class ListType(ObjectType):
 
     @staticmethod
     def from_values(typ: BaseMetatype, values: list[ObjectType]) -> ListType:
+        assert False
         # TODO: ListType from_values
         pass
 
@@ -780,6 +785,7 @@ class TupleType(ObjectType):
 
     @staticmethod
     def from_values(typ: BaseMetatype, values: list[ObjectType]) -> TupleType:
+        assert False
         # TODO: TupleType from_values
         pass
 
@@ -806,6 +812,7 @@ class TupleType(ObjectType):
 
     @staticmethod
     def member_builder(typ: BaseMetatype, params: list[ObjectType]) -> list[Value]:
+        assert False
         # TODO: TupleType member builder
         pass
 
