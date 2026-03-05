@@ -1,7 +1,7 @@
 from __future__ import annotations
 from abc import ABC
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, auto
 import typing
 from llvmlite.ir import (
@@ -17,12 +17,11 @@ from llvmlite.ir import (
     ArrayType,
 )
 
-from hydro.builders import builder_stack, current_module, runtime
+from hydro.runtime import builder_stack, current_module, runtime
 from hydro.helpers import BOOL, LONG, NULL, POINTER, INT, arith_function, functions_into_struct, get_type_size, cmp_function
 from hydro.loggers import create_logger
 from hydro.compiler.interface import CompileError
 from hydro.tokens import Lexeme
-from src.hydro.compiler.compiler import Scope
 
 
 logger = create_logger("Types")
@@ -83,8 +82,8 @@ class TypeHeader:
     generics: dict[str, BaseMetatype]
     inherits: list[BaseMetatype]
     parameters: dict[str, MemberInfo]
-    members: dict[str, MemberInfo] = {}
-    static_members: dict[str, ObjectType] = {}
+    members: dict[str, MemberInfo] = field(default_factory=dict)
+    static_members: dict[str, ObjectType] = field(default_factory=dict)
     is_abstract: bool = False
     has_constructor: bool = True
 
@@ -313,8 +312,10 @@ class BaseMetatype(ObjectType):
         self.llvm_type: IdentifiedStructType = current_module.context.get_identified_type(header.name) # TODO: Correct internal naming
         self.static_llvm_type: IdentifiedStructType = current_module.context.get_identified_type(f"{header.name}__type")
 
-        self.type_global = GlobalVariable(current_module, self.static_llvm_type, f"{self.name}__global")
-        super().__init__(self.type_global, self, allocate=False)
+        self.type_global = GlobalVariable(current_module, self.static_llvm_type, f"{header.name}__global")
+        self.object_members: dict[str, MemberInfo] = {}
+        # TODO: This is cooked.
+        super().__init__(self.type_global, get_type(BaseMetatype), allocate=False)
 
         self.bound = bound
         self.header = header
@@ -324,7 +325,6 @@ class BaseMetatype(ObjectType):
         if self.header.has_constructor or self.header.is_abstract:
             self.static_members["()"] = self.bound.get_initializer(self)
 
-        self.object_members: dict[str, MemberInfo] = {}
         self.struct: list[Type] = []
         if len(self.header.inherits) > 0:
             for inherits in self.header.inherits:
@@ -484,7 +484,7 @@ class BaseMetatype(ObjectType):
     @staticmethod
     def create_metatype(db: dict[str, BaseMetatype], generics: list[BaseMetatype]) -> BaseMetatype:
         assert len(generics) == 0
-        header = TypeHeader("Type", {}, [get_type(ObjectType)], {})
+        header = TypeHeader("Type", {}, [], {})
         out = BaseMetatype(BaseMetatype, header)
         db["Type"] = out
         out.finalize()
@@ -647,7 +647,7 @@ class IntType(ObjectType):
     add = arith_function(current_module, "Int", "+", lambda builder, lhs, rhs: builder.add(lhs, rhs, "arith_res"), INT, INT, INT)  # type: ignore
     sub = arith_function(current_module, "Int", "-", lambda builder, lhs, rhs: builder.sub(lhs, rhs, "arith_res"), INT, INT, INT)  # type: ignore
     mul = arith_function(current_module, "Int", "*", lambda builder, lhs, rhs: builder.mul(lhs, rhs, "arith_res"), INT, INT, INT)  # type: ignore
-    div = arith_function(current_module, "Int", "/", lambda builder, lhs, rhs: builder.div(lhs, rhs, "arith_res"), INT, INT, INT)  # type: ignore
+    div = arith_function(current_module, "Int", "/", lambda builder, lhs, rhs: builder.sdiv(lhs, rhs, "arith_res"), INT, INT, INT)  # type: ignore
 
     initializer: Function | None = None
 

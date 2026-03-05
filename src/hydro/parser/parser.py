@@ -11,7 +11,7 @@ from hydro.scanner import Lexeme, Scanner
 from hydro.tokens import Token
 
 
-logger = create_logger("Parser")
+logger = create_logger("IParser")
 
 
 class Parser(FullParser):
@@ -419,12 +419,13 @@ class Parser(FullParser):
             if self.match(Token.AT):
                 self.annotation()
             elif self.match(Token.IDENTIFIER):
+                print(self.previous)
                 continue
             elif self.match(Token.LEFT_ANGLE) or self.match(Token.EQUAL):
                 return self.DeclType.VAR
-            elif self.match(Token.FN_KW):
+            elif self.check(Token.FN_KW):
                 return self.DeclType.FN
-            elif self.match(Token.CLASS_KW):
+            elif self.check(Token.CLASS_KW):
                 return self.DeclType.CLASS
             raise ParseError(self.peek(), "Unexpected keyword in declaration.")
 

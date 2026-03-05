@@ -11,7 +11,19 @@ from hydro.lang_types import BaseMetatype, BoolType, Callable, InstanceCallable,
 from hydro.parser.nodes import Array, Atom, Binary, Block, Call, ClassDecl, CustomStatement, Declaration, Expression, FunctionDecl, Grouping, Identifier, Literal, Member, Primary, Program, Slice, Span, Statement, Ternary, Tuple, TypeNode, Unary, VarDecl, VarSet
 from hydro.runtime import Runtime
 from hydro.tokens import Lexeme
-from hydro.compiler.interface import Header, Scope, logger, CompileError, CompilerBase
+from hydro.compiler.interface import logger, CompileError, CompilerBase
+
+
+
+@dataclass
+class Header:
+    node: Declaration
+    generics: list[BaseMetatype]
+    params: list[BaseMetatype]
+    inside: BaseMetatype | None
+
+
+Scope = dict[Lexeme, ObjectType | Header]
 
 
 class Implementations:
@@ -107,15 +119,13 @@ class Compiler(CompilerBase):
         self.target = llvm.Target.from_default_triple().create_target_machine(reloc="pic")
         logger.debug("LLVM Targets initialized.")
 
-        builders.current_module = Module(program.path.stem)
-        builders.runtime = Runtime(builders.current_module)
-        logger.debug("Runtime initialized.")
+        main_ty = FunctionType(INT, [])
+        self.main = Function(current_module, main_ty, "main")
+        block = self.main.append_basic_block("entry")
+        builder_stack.append(IRBuilder(block))
 
         self.scope[Lexeme.make_id("Bool")] = BoolType.create_metatype(type_db)
         logger.debug("Builtin types initialized.")
-
-        main_ty = FunctionType(INT, [])
-        self.main = Function(current_module, main_ty, "main")
 
     @property
     def scope(self) -> Scope:

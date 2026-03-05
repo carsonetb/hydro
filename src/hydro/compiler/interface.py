@@ -4,23 +4,11 @@ from pathlib import Path
 
 from hydro.parser.nodes import Declaration, Expression, Program, Span, Statement
 from hydro.tokens import Lexeme
-from src.hydro.lang_types import BaseMetatype, ObjectType
-from src.hydro.loggers import create_logger
+from hydro.loggers import create_logger
 
 
-logger = create_logger("Compiler")
+logger = create_logger("ICompiler")
 errors = create_logger("Compiler", False)
-
-
-@dataclass
-class Header:
-    node: Declaration
-    generics: list[BaseMetatype]
-    params: list[BaseMetatype]
-    inside: BaseMetatype | None
-
-
-Scope = dict[Lexeme, ObjectType | Header]
 
 
 class CompileError(RuntimeError):
@@ -46,20 +34,4 @@ class CompilerBase(ABC):
 
     @abstractmethod
     def gen_program(self) -> None:
-        pass
-
-    @abstractmethod
-    def declaration(self, decl: Declaration, inside: BaseMetatype | None) -> None:
-        pass
-
-    @abstractmethod
-    def statement(self, stmt: Statement) -> ObjectType:
-        pass
-
-    @abstractmethod
-    def expression(self, expr: Expression, into_name: str = "unnamed_expression") -> ObjectType:
-        pass
-
-    @abstractmethod
-    def block(self, stmts: list[Statement]) -> ObjectType | None:
         pass

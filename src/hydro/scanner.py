@@ -44,7 +44,7 @@ class Scanner:
         self.col = 1
         self.lexemes: list[Lexeme] = []
 
-        logger.debug(f"Parser created in {self.file}.")
+        logger.debug(f"Scanner created in {self.file}.")
 
     @property
     def position(self) -> Position:
@@ -70,15 +70,13 @@ class Scanner:
             self.start = self.current
             self.scan_lexeme()
 
+        self.add_lexeme(Token.EOF)
+
         logger.debug(f"Finished parsing {self.file}.")
 
         return self.lexemes
 
     def scan_lexeme(self) -> None:
-        if self.at_end:
-            self.add_lexeme(Token.EOF)
-            return
-
         char = self.advance()
 
         if char.isalpha():

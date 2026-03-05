@@ -15,7 +15,7 @@ def main() -> None:
 
     assert len(sys.argv) == 2
 
-    file = Path(sys.argv[0])
+    file = Path(sys.argv[1])
     scanner = Scanner(file)
     lexemes = scanner.scan_source()
     parser = Parser(file.parent,file, lexemes, BUILTIN_RULES, {})
