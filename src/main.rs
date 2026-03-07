@@ -1,6 +1,7 @@
 mod context;
 mod int;
 mod value;
+mod errors;
 
 use std::{error::Error};
 

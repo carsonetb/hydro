@@ -1,5 +1,5 @@
 use inkwell::{
-    AddressSpace, OptimizationLevel, builder::Builder, context::Context, module::Module, targets::{CodeModel, RelocMode, Target, TargetMachine}, types::{FloatType, IntType, PointerType, VoidType}
+    AddressSpace, OptimizationLevel, builder::Builder, context::Context, module::Module, targets::{CodeModel, RelocMode, Target, TargetMachine}, types::{BasicTypeEnum, FloatType, IntType, PointerType, StructType, VoidType}, values::IntValue
 };
 
 pub struct LanguageContext<'ctx> {
@@ -34,6 +34,10 @@ impl<'ctx> LanguageContext<'ctx> {
             machine,
         }
     }
+
+    pub fn int(&self, value: u64) -> IntValue<'ctx> {
+        self.types.int.const_int(value, false)
+    }
 }
 
 pub struct LLVMTypes<'ctx> {
@@ -41,6 +45,7 @@ pub struct LLVMTypes<'ctx> {
     pub char: IntType<'ctx>,
     pub short: IntType<'ctx>,
     pub int: IntType<'ctx>,
+    pub int_struct: StructType<'ctx>,
     pub long: IntType<'ctx>,
     pub big: IntType<'ctx>,
     pub float: FloatType<'ctx>,
@@ -51,7 +56,10 @@ pub struct LLVMTypes<'ctx> {
 
 impl<'ctx> LLVMTypes<'ctx> {
     pub fn new(context: &'ctx Context) -> Self {
+        let int_struct = context.get_struct_type("Int").expect("Int type probably already exists!");
+
         Self {
+            int_struct,
             bool: context.bool_type(),
             char: context.i8_type(),
             short: context.i16_type(),
@@ -63,5 +71,9 @@ impl<'ctx> LLVMTypes<'ctx> {
             ptr: context.ptr_type(AddressSpace::from(0u16)),
             void: context.void_type(),
         }
+    }
+
+    pub fn int_enum(&self) -> BasicTypeEnum<'ctx> {
+        BasicTypeEnum::IntType(self.int)
     }
 }
