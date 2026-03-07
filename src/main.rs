@@ -2,6 +2,7 @@ mod context;
 mod int;
 mod value;
 mod errors;
+mod types;
 
 use std::{error::Error};
 
