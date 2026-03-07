@@ -1,18 +1,16 @@
 use inkwell::{
-    context::Context,
-    targets::{CodeModel, RelocMode, Target, TargetMachine},
+    AddressSpace, OptimizationLevel, builder::Builder, context::Context, module::Module, targets::{CodeModel, RelocMode, Target, TargetMachine}, types::{FloatType, IntType, PointerType, VoidType}
 };
 
 pub struct LanguageContext<'ctx> {
-    context: Context,
-    module: Module<'ctx>,
-    builder: Builder,
-    machine: TargetMachine,
+    pub types: LLVMTypes<'ctx>,
+    pub module: Module<'ctx>,
+    pub builder: Builder<'ctx>,
+    pub machine: TargetMachine,
 }
 
-pub impl<'ctx> LanguageContext<'ctx> {
-    pub fn new() -> Self {
-        let context = Context::create();
+impl<'ctx> LanguageContext<'ctx> {
+    pub fn new(context: &'ctx Context) -> Self {
         let module = context.create_module("module");
 
         let triple = TargetMachine::get_default_triple();
@@ -27,12 +25,43 @@ pub impl<'ctx> LanguageContext<'ctx> {
                 CodeModel::Default,
             )
             .unwrap();
+        let builder = context.create_builder();
 
         Self {
-            context,
+            types: LLVMTypes::new(context),
             builder,
             module,
             machine,
+        }
+    }
+}
+
+pub struct LLVMTypes<'ctx> {
+    pub bool: IntType<'ctx>,
+    pub char: IntType<'ctx>,
+    pub short: IntType<'ctx>,
+    pub int: IntType<'ctx>,
+    pub long: IntType<'ctx>,
+    pub big: IntType<'ctx>,
+    pub float: FloatType<'ctx>,
+    pub double: FloatType<'ctx>,
+    pub ptr: PointerType<'ctx>,
+    pub void: VoidType<'ctx>,
+}
+
+impl<'ctx> LLVMTypes<'ctx> {
+    pub fn new(context: &'ctx Context) -> Self {
+        Self {
+            bool: context.bool_type(),
+            char: context.i8_type(),
+            short: context.i16_type(),
+            int: context.i32_type(),
+            long: context.i64_type(),
+            big: context.i128_type(),
+            float: context.f32_type(),
+            double: context.f64_type(),
+            ptr: context.ptr_type(AddressSpace::from(0u16)),
+            void: context.void_type(),
         }
     }
 }

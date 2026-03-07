@@ -1,29 +1,26 @@
 mod context;
-mod typing;
+mod int;
+mod value;
 
-use std::{error::Error, thread::Builder};
+use std::{error::Error};
 
-use inkwell::{
-    OptimizationLevel,
-    context::Context,
-    module::Module,
-    targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetMachine},
-    types::FunctionType,
-};
+use inkwell::{context::Context, targets::{InitializationConfig, Target}};
 
 use crate::context::LanguageContext;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let context = LanguageContext::new();
+    Target::initialize_native(&InitializationConfig::default()).expect("Failed to initialize native machine target!");
 
-    let int_type = context.i32_type();
-    let main_type = int_type.fn_type(&[], false);
-    let main_val = module.add_function("main", main_type, None);
-    let entry = context.append_basic_block(main_val, "entry");
-    builder.position_at_end(entry);
+    let llvm_ctx = Context::create();
+    let ctx = LanguageContext::new(&llvm_ctx);
 
-    builder.build_return(None).unwrap();
+    let main_type = ctx.types.int.fn_type(&[], false);
+    let main_val = ctx.module.add_function("main", main_type, None);
+    let entry = llvm_ctx.append_basic_block(main_val, "entry");
+    ctx.builder.position_at_end(entry);
     main_val.verify(false);
 
-    return Ok(());
+    ctx.builder.build_return(None).unwrap();
+
+    Ok(())
 }
