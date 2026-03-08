@@ -2,12 +2,15 @@ mod compile;
 mod context;
 mod errors;
 mod int;
+mod parser;
 mod scope;
 mod types;
 mod value;
 
-use std::error::Error;
+use std::{error::Error, process::exit};
 
+use ariadne::{Color, Label, Report, ReportKind, Source};
+use chumsky::Parser;
 use inkwell::{
     context::Context,
     targets::{InitializationConfig, Target},
@@ -17,10 +20,30 @@ use crate::{
     compile::execute_jit,
     context::LanguageContext,
     int::Int,
+    parser::program,
     value::{Literal, ValueField, ValuePtr},
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let src = "var x: int = 9 **; var x: int = 9.;";
+    let filename = "script.hydro";
+    let (ast, errors) = program().parse(src).into_output_errors();
+
+    for err in errors {
+        Report::build(ReportKind::Error, (filename, err.span().into_range()))
+            .with_message("Syntax Error")
+            .with_label(
+                Label::new((filename, err.span().into_range()))
+                    .with_message(err.reason().to_string())
+                    .with_color(Color::Red),
+            )
+            .finish()
+            .eprint((filename, Source::from(src)))
+            .unwrap();
+    }
+
+    exit(0);
+
     Target::initialize_native(&InitializationConfig::default())
         .expect("Failed to initialize native machine target!");
 
@@ -44,7 +67,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     ctx.builder.build_return(Some(&raw)).unwrap();
 
-    main_val.verify(true);
+    main_val.verify(false);
     ctx.module.verify().unwrap();
     ctx.module.print_to_stderr();
 
