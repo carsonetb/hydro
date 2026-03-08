@@ -9,6 +9,7 @@ use inkwell::{
     values::{IntValue, PointerValue},
 };
 
+#[derive(Clone)]
 pub struct Int<'ctx> {
     pub ptr: PointerValue<'ctx>,
 }
@@ -35,6 +36,10 @@ impl<'ctx> Int<'ctx> {
 impl<'ctx> Value<'ctx> for Int<'ctx> {
     fn member(&self, ctx: &LanguageContext<'ctx>, name: String) -> Option<&ValueField<'ctx>> {
         Option::<&ValueField<'ctx>>::None
+    }
+
+    fn get_type(&self, ctx: &LanguageContext<'ctx>) -> Metatype<'ctx> {
+        ctx.get_metatype("Int".to_string()).unwrap()
     }
 
     fn build_metatype(llvm_ctx: &'ctx Context, ctx: &LanguageContext<'ctx>) -> Metatype<'ctx> {

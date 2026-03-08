@@ -10,7 +10,7 @@ use inkwell::{
     values::IntValue,
 };
 
-use crate::{int::Int, types::Metatype, value::Value};
+use crate::{int::Int, scope::Scope, types::Metatype, value::Value};
 
 pub struct LanguageContext<'ctx> {
     pub metatypes: HashMap<String, Metatype<'ctx>>,
@@ -18,6 +18,7 @@ pub struct LanguageContext<'ctx> {
     pub module: Module<'ctx>,
     pub builder: Builder<'ctx>,
     pub machine: TargetMachine,
+    pub scope: Scope<'ctx>,
 }
 
 impl<'ctx> LanguageContext<'ctx> {
@@ -44,12 +45,19 @@ impl<'ctx> LanguageContext<'ctx> {
             builder,
             module,
             machine,
+            scope: Scope::new(),
         }
     }
 
     pub fn init_metatypes(&mut self, context: &'ctx Context) {
         self.metatypes
             .insert("Int".to_string(), Int::build_metatype(context, self));
+        self.metatypes
+            .insert("Type".to_string(), Metatype::build_metatype(context, self));
+    }
+
+    pub fn get_metatype(&self, name: String) -> Option<Metatype<'ctx>> {
+        self.metatypes.get(&name).cloned()
     }
 
     pub fn int(&self, value: u64) -> IntValue<'ctx> {

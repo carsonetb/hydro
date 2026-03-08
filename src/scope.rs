@@ -6,6 +6,14 @@ type ScopeItem<'ctx> = HashMap<String, ValueField<'ctx>>;
 pub struct Scope<'ctx>(Vec<ScopeItem<'ctx>>);
 
 impl<'ctx> Scope<'ctx> {
+    pub fn new() -> Self {
+        todo!()
+    }
+
+    pub fn add_field(&mut self, name: String, field: ValueField<'ctx>) {
+        todo!()
+    }
+
     pub fn push_scope(&mut self) {
         self.0.push(ScopeItem::new());
     }

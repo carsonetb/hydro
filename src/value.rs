@@ -7,17 +7,20 @@ use inkwell::{
 
 use crate::{context::LanguageContext, int::Int, types::Metatype};
 
+#[derive(Clone)]
 pub struct Field<'ctx, T: Copyable<'ctx>> {
     name: String,
+    typ: Metatype<'ctx>,
     invalid: bool,
     field_ptr: PointerValue<'ctx>,
     _marker: PhantomData<T>,
 }
 
 impl<'ctx, T: Copyable<'ctx>> Field<'ctx, T> {
-    pub fn new(field_ptr: PointerValue<'ctx>, name: String) -> Self {
+    pub fn new(field_ptr: PointerValue<'ctx>, name: String, typ: Metatype<'ctx>) -> Self {
         Self {
             name,
+            typ,
             invalid: false,
             field_ptr,
             _marker: PhantomData,
@@ -30,7 +33,7 @@ impl<'ctx, T: Copyable<'ctx>> Field<'ctx, T> {
             .build_alloca(ctx.types.ptr, &format!("{name}_field_ptr"))
             .unwrap();
         ctx.builder.build_store(field_ptr, from.get_ptr()).unwrap();
-        Self::new(field_ptr, name)
+        Self::new(field_ptr, name, from.get_type(ctx))
     }
 
     pub fn load(&self, ctx: &LanguageContext<'ctx>, into_name: String) -> Option<T> {
@@ -63,8 +66,15 @@ impl<'ctx> ValuePtr<'ctx> {
             ValuePtr::PInt(int) => int.ptr,
         }
     }
+
+    pub fn get_type(&self, ctx: &LanguageContext<'ctx>) -> Metatype<'ctx> {
+        match self {
+            ValuePtr::PInt(int) => int.get_type(ctx),
+        }
+    }
 }
 
+#[derive(Clone)]
 pub enum ValueField<'ctx> {
     RInt(Field<'ctx, Int<'ctx>>),
 }
@@ -95,6 +105,7 @@ impl<'ctx> ValueField<'ctx> {
 
 pub trait Value<'ctx> {
     fn member(&self, ctx: &LanguageContext<'ctx>, name: String) -> Option<&ValueField<'ctx>>;
+    fn get_type(&self, ctx: &LanguageContext<'ctx>) -> Metatype<'ctx>;
     fn build_metatype(llvm_ctx: &'ctx Context, ctx: &LanguageContext<'ctx>) -> Metatype<'ctx>;
 }
 

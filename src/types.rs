@@ -11,7 +11,9 @@ use crate::{
     value::{Field, Value, ValueField, ValuePtr},
 };
 
+#[derive(Clone)]
 pub struct Metatype<'ctx> {
+    pub name: String,
     members: HashMap<String, ValueField<'ctx>>,
     static_ptr: PointerValue<'ctx>,
     pub static_struct: StructType<'ctx>,
@@ -32,6 +34,10 @@ impl<'ctx> Value<'ctx> for Metatype<'ctx> {
     fn build_metatype(llvm_ctx: &'ctx Context, ctx: &LanguageContext<'ctx>) -> Metatype<'ctx> {
         let mut builder = MetatypeBuilder::new("Type".to_string(), ctx.types.type_struct);
         builder.build(llvm_ctx, ctx)
+    }
+
+    fn get_type(&self, ctx: &LanguageContext<'ctx>) -> Metatype<'ctx> {
+        ctx.get_metatype("Type".to_string()).unwrap()
     }
 }
 
@@ -83,9 +89,11 @@ impl<'ctx> MetatypeBuilder<'ctx> {
             members.insert(
                 val.name.clone(),
                 match val.val {
-                    ValuePtr::PInt(_int) => {
-                        ValueField::RInt(Field::new(field_ptr, val.name.clone()))
-                    }
+                    ValuePtr::PInt(_int) => ValueField::RInt(Field::new(
+                        field_ptr,
+                        val.name.clone(),
+                        ctx.get_metatype("Int".to_string()).unwrap(),
+                    )),
                 },
             );
 
@@ -94,6 +102,7 @@ impl<'ctx> MetatypeBuilder<'ctx> {
         static_struct.set_body(&internals, false);
 
         Metatype::<'ctx> {
+            name: name.clone().to_string(),
             members,
             static_ptr,
             static_struct,
