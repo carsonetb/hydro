@@ -8,20 +8,20 @@ use crate::{
     callable::Function,
     context::LanguageContext,
     int::Int,
-    types::{BasicType, Metatype},
+    types::{BasicType, Metatype, TypeId},
     unit::Unit,
 };
 
 #[derive(Debug, Clone)]
 pub struct Field<'ctx> {
     name: String,
-    typ: Metatype<'ctx>,
+    typ: TypeId,
     invalid: bool,
     field_ptr: PointerValue<'ctx>,
 }
 
 impl<'ctx> Field<'ctx> {
-    pub fn new(field_ptr: PointerValue<'ctx>, name: String, typ: Metatype<'ctx>) -> Self {
+    pub fn new(field_ptr: PointerValue<'ctx>, name: String, typ: TypeId) -> Self {
         Self {
             name,
             typ,
@@ -101,26 +101,26 @@ impl<'ctx> ValuePtr<'ctx> {
     }
 }
 
-#[enum_dispatch(ValuePtr, IndevCallable)]
+#[enum_dispatch(ValuePtr)]
 pub trait Value<'ctx> {
     fn member(&self, ctx: &LanguageContext<'ctx>, name: String) -> Option<&Field<'ctx>>;
-    fn get_type(&self, ctx: &LanguageContext<'ctx>) -> Metatype<'ctx>;
+    fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeId;
     fn get_ptr(&self) -> PointerValue<'ctx>;
 }
 
 pub trait ValueStatic<'ctx>: Value<'ctx> {
     fn build_metatype(
         llvm_ctx: &'ctx Context,
-        ctx: &LanguageContext<'ctx>,
-        generics: Vec<Metatype<'ctx>>,
-    ) -> Metatype<'ctx>;
+        ctx: &mut LanguageContext<'ctx>,
+        generics: Vec<TypeId>,
+    );
 }
 
 pub trait Copyable<'ctx>: Value<'ctx> {
     fn from_ptr(
         ctx: &LanguageContext<'ctx>,
         ptr: PointerValue<'ctx>,
-        ptr_type: Metatype<'ctx>,
+        ptr_type: TypeId,
         this_name: String,
         other_name: String,
     ) -> Self;

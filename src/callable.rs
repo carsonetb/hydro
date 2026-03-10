@@ -6,7 +6,7 @@ use inkwell::{
 
 use crate::{
     context::LanguageContext,
-    types::{BasicType, Metatype, MetatypeBuilder},
+    types::{BasicType, Metatype, MetatypeBuilder, TypeId},
     unit::Unit,
     value::{Copyable, Field, Value, ValuePtr, ValueStatic},
 };
@@ -26,7 +26,7 @@ pub trait Callable<'ctx> {
 #[derive(Clone)]
 pub struct Function<'ctx> {
     name: String,
-    metatype: Metatype<'ctx>,
+    metatype: TypeId,
     pub ptr: PointerValue<'ctx>,
 }
 
@@ -34,16 +34,17 @@ impl<'ctx> Function<'ctx> {
     pub fn new(
         ctx: &LanguageContext<'ctx>,
         fn_ptr: PointerValue<'ctx>,
-        typ: Metatype<'ctx>,
+        typ: TypeId,
         name: String,
     ) -> Self {
+        let typ_struct = ctx.get_struct(typ.clone());
         let ptr = ctx
             .builder
-            .build_alloca(typ.obj_struct, &format!("{name}_ptr"))
+            .build_alloca(typ_struct, &format!("{name}_ptr"))
             .unwrap();
         let value_ptr = ctx
             .builder
-            .build_struct_gep(typ.obj_struct, ptr, 0, &format!("{name}_value_ptr"))
+            .build_struct_gep(typ_struct, ptr, 0, &format!("{name}_value_ptr"))
             .unwrap();
         ctx.builder.build_store(value_ptr, fn_ptr).unwrap();
         Self {
@@ -56,7 +57,7 @@ impl<'ctx> Function<'ctx> {
     pub fn from_function(
         ctx: &LanguageContext<'ctx>,
         fn_val: FunctionValue<'ctx>,
-        typ: Metatype<'ctx>,
+        typ: TypeId,
     ) -> Self {
         Self::new(
             ctx,
@@ -78,7 +79,7 @@ impl<'ctx> Callable<'ctx> for Function<'ctx> {
         args: Vec<ValuePtr<'ctx>>,
         into_name: String,
     ) -> ValuePtr<'ctx> {
-        assert!(self.verify(args.iter().map(|arg| arg.get_type(ctx)).collect()));
+        assert!(self.verify(args.iter().map(|arg| ctx.get(arg.get_type(ctx))).collect()));
 
         let arg_ptrs: Vec<BasicMetadataValueEnum> = args
             .iter()
@@ -122,7 +123,7 @@ impl<'ctx> Value<'ctx> for Function<'ctx> {
         Option::<&Field<'ctx>>::None
     }
 
-    fn get_type(&self, _ctx: &LanguageContext<'ctx>) -> Metatype<'ctx> {
+    fn get_type(&self, _ctx: &LanguageContext<'ctx>) -> TypeId {
         self.metatype.clone()
     }
 
@@ -134,19 +135,19 @@ impl<'ctx> Value<'ctx> for Function<'ctx> {
 impl<'ctx> ValueStatic<'ctx> for Function<'ctx> {
     fn build_metatype(
         llvm_ctx: &'ctx Context,
-        ctx: &LanguageContext<'ctx>,
-        generics: Vec<Metatype<'ctx>>,
-    ) -> Metatype<'ctx> {
-        assert_eq!(generics.len(), 0);
-        assert_eq!(generics[0].class_name, "Tuple");
+        ctx: &mut LanguageContext<'ctx>,
+        generics: Vec<TypeId>,
+    ) {
+        assert_eq!(generics.len(), 2);
+        assert_eq!(generics[0].base(), "Tuple");
 
-        let type_name = Metatype::gen_name("Function".to_string(), &generics);
-        let obj_struct = llvm_ctx.opaque_struct_type(&type_name);
+        let type_name = TypeId::gen_id("Function".to_string(), generics.clone());
+        let obj_struct = llvm_ctx.opaque_struct_type(type_name.0.as_str());
         obj_struct.set_body(&[BasicTypeEnum::PointerType(ctx.types.ptr)], false);
 
         let mut builder =
-            MetatypeBuilder::new(BasicType::Function, "Function".to_string(), obj_struct);
-        builder.build(llvm_ctx, ctx, generics)
+            MetatypeBuilder::new(ctx, BasicType::Function, "Function".to_string(), obj_struct);
+        builder.build(llvm_ctx, ctx, generics);
     }
 }
 
@@ -154,7 +155,7 @@ impl<'ctx> Copyable<'ctx> for Function<'ctx> {
     fn from_ptr(
         ctx: &LanguageContext<'ctx>,
         ptr: PointerValue<'ctx>,
-        ptr_type: Metatype<'ctx>,
+        ptr_type: TypeId,
         this_name: String,
         other_name: String,
     ) -> Self {

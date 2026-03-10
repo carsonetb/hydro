@@ -33,8 +33,8 @@ pub fn gen_expr<'ctx>(ctx: &LanguageContext<'ctx>, expr: &Expr) -> ValuePtr<'ctx
         Expr::Binary(left, op, right) => {
             let left = gen_expr(ctx, left);
             let right = gen_expr(ctx, right);
-            let left_type = left.get_type(ctx);
-            let right_type = right.get_type(ctx);
+            let left_type = ctx.get(left.get_type(ctx));
+            let right_type = ctx.get(right.get_type(ctx));
             assert_eq!(left_type, right_type);
             let op_fn = left_type
                 .member(ctx, op.clone())
@@ -53,7 +53,7 @@ pub fn gen_stmt(ctx: &mut LanguageContext, stmt: &Stmt) {
         Stmt::Error(_) => panic!(),
         Stmt::VarDecl { name, typ, value } => {
             let value = gen_expr(ctx, value.as_ref());
-            assert_eq!(value.get_type(ctx).name, typ.clone());
+            assert_eq!(value.get_type(ctx).name(), typ.clone());
             let field = Field::from_value(ctx, value, name.clone());
             ctx.scope.add_field(name.clone(), field);
         }

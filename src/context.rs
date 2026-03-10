@@ -13,10 +13,15 @@ use inkwell::{
     values::IntValue,
 };
 
-use crate::{int::Int, scope::Scope, types::Metatype, value::ValueStatic};
+use crate::{
+    int::Int,
+    scope::Scope,
+    types::{Metatype, TypeId},
+    value::ValueStatic,
+};
 
 pub struct LanguageContext<'ctx> {
-    pub metatypes: HashMap<String, Metatype<'ctx>>,
+    pub metatypes: HashMap<TypeId, Option<Metatype<'ctx>>>,
     pub types: LLVMTypes<'ctx>,
     pub module: Module<'ctx>,
     pub builder: Builder<'ctx>,
@@ -43,7 +48,7 @@ impl<'ctx> LanguageContext<'ctx> {
         let builder = context.create_builder();
 
         Self {
-            metatypes: HashMap::<String, Metatype<'ctx>>::new(),
+            metatypes: HashMap::<TypeId, Option<Metatype<'ctx>>>::new(),
             types: LLVMTypes::new(context),
             builder,
             module,
@@ -53,26 +58,29 @@ impl<'ctx> LanguageContext<'ctx> {
     }
 
     pub fn init_metatypes(&mut self, context: &'ctx Context) {
-        self.metatypes.insert(
-            "Int".to_string(),
-            Int::build_metatype(context, self, Vec::<Metatype<'ctx>>::new()),
-        );
-        self.metatypes.insert(
-            "Type".to_string(),
-            Metatype::build_metatype(context, self, Vec::<Metatype<'ctx>>::new()),
-        );
+        Int::build_metatype(context, self, Vec::<TypeId>::new());
+        Metatype::build_metatype(context, self, Vec::<TypeId>::new());
     }
 
-    pub fn get_base_metatype(&self, name: String) -> Option<Metatype<'ctx>> {
-        self.metatypes.get(&name).cloned()
+    pub fn reserve_metatype(&mut self, name: String) -> TypeId {
+        let out = TypeId(name);
+        self.metatypes.insert(out.clone(), None);
+        out
     }
 
-    pub fn get_metatype(
-        &self,
-        base_name: String,
-        generics: Vec<Metatype<'ctx>>,
-    ) -> Option<Metatype<'ctx>> {
-        self.get_base_metatype(Metatype::gen_name(base_name, &generics))
+    pub fn validate_id(&self, id: TypeId) {
+        self.metatypes
+            .get(&id)
+            .expect(format!("Could not validate that type {id} exists!").as_str());
+    }
+
+    pub fn get(&self, id: TypeId) -> Metatype<'ctx> {
+        self.maybe_get(id)
+            .expect("Cannot find type {id} or it is not fully initialized.")
+    }
+
+    pub fn maybe_get(&self, id: TypeId) -> Option<Metatype<'ctx>> {
+        self.metatypes.get(&id).cloned().flatten()
     }
 
     pub fn int(&self, value: u64) -> IntValue<'ctx> {
@@ -90,13 +98,8 @@ impl<'ctx> LanguageContext<'ctx> {
         )
     }
 
-    pub fn get_struct(&self, type_name: String) -> Option<StructType<'ctx>> {
-        Some(
-            self.metatypes
-                .get(&type_name)
-                .expect(&format!("Cannot find type {type_name}."))
-                .obj_struct,
-        )
+    pub fn get_struct(&self, id: TypeId) -> StructType<'ctx> {
+        self.get(id).obj_struct
     }
 }
 

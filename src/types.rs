@@ -1,6 +1,5 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Display};
 
-use enum_dispatch::enum_dispatch;
 use inkwell::{
     context::Context,
     types::{BasicTypeEnum, StructType},
@@ -20,25 +19,33 @@ pub enum BasicType {
     Function,
 }
 
-#[enum_dispatch]
-pub enum IndevMetatype<'ctx> {
-    Opaque(OpaqueMetatype),
-    Defined(Metatype<'ctx>),
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TypeId(pub String);
+
+impl TypeId {
+    pub fn base(&self) -> String {
+        self.0.split('<').next().unwrap().to_string()
+    }
+
+    pub fn name(&self) -> String {
+        self.0.clone()
+    }
+
+    pub fn gen_id(name: String, generics: Vec<TypeId>) -> TypeId {
+        let mut generic_name = name.to_owned();
+
+        if !generics.is_empty() {
+            let generic_subnames: Vec<String> = generics.iter().map(|g| g.0.clone()).collect();
+            generic_name.push_str(&format!("<{}>", generic_subnames.join(", ")));
+        }
+
+        TypeId(generic_name)
+    }
 }
 
-pub struct OpaqueMetatype {}
-
-impl<'ctx> Value<'ctx> for OpaqueMetatype {
-    fn member(&self, _ctx: &LanguageContext<'ctx>, _name: String) -> Option<&Field<'ctx>> {
-        panic!("OpaqueMetatype has no members, cannot use members at this stage.")
-    }
-
-    fn get_type(&self, ctx: &LanguageContext<'ctx>) -> Metatype<'ctx> {
-        ctx.get_base_metatype("Type".to_string()).unwrap()
-    }
-
-    fn get_ptr(&self) -> PointerValue<'ctx> {
-        panic!("OpaqueMetatype has no pointer, cannot use get_ptr at this stage.")
+impl Display for TypeId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
     }
 }
 
@@ -46,7 +53,7 @@ impl<'ctx> Value<'ctx> for OpaqueMetatype {
 pub struct Metatype<'ctx> {
     pub base: BasicType,
     pub class_name: String,
-    pub name: String,
+    pub id: TypeId,
     pub generics: Vec<Metatype<'ctx>>,
     members: HashMap<String, Field<'ctx>>,
     static_ptr: PointerValue<'ctx>,
@@ -54,18 +61,7 @@ pub struct Metatype<'ctx> {
     pub obj_struct: StructType<'ctx>,
 }
 
-impl<'ctx> Metatype<'ctx> {
-    pub fn gen_name(name: String, generics: &Vec<Metatype<'ctx>>) -> String {
-        let mut generic_name = name.to_owned();
-
-        if !generics.is_empty() {
-            let generic_subnames: Vec<String> = generics.iter().map(|g| g.name.clone()).collect();
-            generic_name.push_str(&format!("<{}>", generic_subnames.join(", ")));
-        }
-
-        generic_name
-    }
-}
+impl<'ctx> Metatype<'ctx> {}
 
 impl<'ctx> Value<'ctx> for Metatype<'ctx> {
     fn member(&self, ctx: &LanguageContext<'ctx>, name: String) -> Option<&Field<'ctx>> {
@@ -76,8 +72,8 @@ impl<'ctx> Value<'ctx> for Metatype<'ctx> {
         }
     }
 
-    fn get_type(&self, ctx: &LanguageContext<'ctx>) -> Metatype<'ctx> {
-        ctx.get_base_metatype("Type".to_string()).unwrap()
+    fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeId {
+        TypeId("Type".to_string())
     }
 
     fn get_ptr(&self) -> PointerValue<'ctx> {
@@ -88,19 +84,23 @@ impl<'ctx> Value<'ctx> for Metatype<'ctx> {
 impl<'ctx> ValueStatic<'ctx> for Metatype<'ctx> {
     fn build_metatype(
         llvm_ctx: &'ctx Context,
-        ctx: &LanguageContext<'ctx>,
-        generics: Vec<Metatype<'ctx>>,
-    ) -> Metatype<'ctx> {
+        ctx: &mut LanguageContext<'ctx>,
+        generics: Vec<TypeId>,
+    ) {
         assert_eq!(generics.len(), 0);
-        let mut builder =
-            MetatypeBuilder::new(BasicType::Type, "Type".to_string(), ctx.types.type_struct);
+        let mut builder = MetatypeBuilder::new(
+            ctx,
+            BasicType::Type,
+            "Type".to_string(),
+            ctx.types.type_struct,
+        );
         builder.build(llvm_ctx, ctx, generics)
     }
 }
 
 impl<'ctx> PartialEq for Metatype<'ctx> {
     fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
+        self.id == other.id
     }
 }
 
@@ -110,19 +110,24 @@ struct BuilderStaticRepr<'ctx> {
 }
 
 pub struct MetatypeBuilder<'ctx> {
+    id: TypeId,
     base: BasicType,
     name: String,
-    pub indev: IndevMetatype<'ctx>,
     obj_struct: StructType<'ctx>,
     static_values: Vec<BuilderStaticRepr<'ctx>>,
 }
 
 impl<'ctx> MetatypeBuilder<'ctx> {
-    pub fn new(base: BasicType, name: String, obj_struct: StructType<'ctx>) -> Self {
+    pub fn new(
+        ctx: &mut LanguageContext<'ctx>,
+        base: BasicType,
+        name: String,
+        obj_struct: StructType<'ctx>,
+    ) -> Self {
         Self {
+            id: ctx.reserve_metatype(name.clone()),
             base,
             name: name.clone(),
-            indev: IndevMetatype::Opaque(OpaqueMetatype {}),
             obj_struct,
             static_values: Vec::<BuilderStaticRepr<'ctx>>::new(),
         }
@@ -135,9 +140,9 @@ impl<'ctx> MetatypeBuilder<'ctx> {
     pub fn build(
         &mut self,
         llvm_ctx: &'ctx Context,
-        ctx: &LanguageContext<'ctx>,
-        generics: Vec<Metatype<'ctx>>,
-    ) -> Metatype<'ctx> {
+        ctx: &mut LanguageContext<'ctx>,
+        generics: Vec<TypeId>,
+    ) {
         let name = self.name.as_str();
         let static_struct = llvm_ctx.opaque_struct_type(format!("{name}__static").as_str());
         let static_ptr = ctx.builder.build_alloca(static_struct, name).unwrap();
@@ -163,15 +168,20 @@ impl<'ctx> MetatypeBuilder<'ctx> {
         }
         static_struct.set_body(&internals, false);
 
-        Metatype::<'ctx> {
+        let out = Metatype::<'ctx> {
             base: self.base.clone(),
             class_name: name.to_string(),
-            name: Metatype::gen_name(name.to_string(), &generics),
-            generics,
+            id: self.id.clone(),
+            generics: generics
+                .iter()
+                .map(|g| ctx.get(g.clone()).unwrap())
+                .collect(),
             members,
             static_ptr,
             static_struct,
             obj_struct: self.obj_struct,
-        }
+        };
+
+        ctx.metatypes.insert(self.id.clone(), Some(out));
     }
 }

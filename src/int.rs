@@ -1,12 +1,12 @@
 use crate::{
     callable::Function,
     context::{LLVMTypes, LanguageContext},
-    types::{BasicType, Metatype, MetatypeBuilder},
+    types::{BasicType, Metatype, MetatypeBuilder, TypeId},
     value::{Copyable, Field, Literal, Value, ValuePtr, ValueStatic},
 };
 use inkwell::{
     context::Context,
-    types::{FunctionType, StructType},
+    types::StructType,
     values::{IntValue, PointerValue},
 };
 
@@ -39,8 +39,8 @@ impl<'ctx> Value<'ctx> for Int<'ctx> {
         Option::<&Field<'ctx>>::None
     }
 
-    fn get_type(&self, ctx: &LanguageContext<'ctx>) -> Metatype<'ctx> {
-        ctx.get_base_metatype("Int".to_string()).unwrap()
+    fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeId {
+        TypeId("Int".to_string())
     }
 
     fn get_ptr(&self) -> PointerValue<'ctx> {
@@ -51,22 +51,20 @@ impl<'ctx> Value<'ctx> for Int<'ctx> {
 impl<'ctx> ValueStatic<'ctx> for Int<'ctx> {
     fn build_metatype(
         llvm_ctx: &'ctx Context,
-        ctx: &LanguageContext<'ctx>,
-        generics: Vec<Metatype<'ctx>>,
-    ) -> Metatype<'ctx> {
+        ctx: &mut LanguageContext<'ctx>,
+        generics: Vec<TypeId>,
+    ) {
         assert_eq!(generics.len(), 0);
         let mut builder =
-            MetatypeBuilder::new(BasicType::Int, "Int".to_string(), ctx.types.int_struct);
+            MetatypeBuilder::new(ctx, BasicType::Int, "Int".to_string(), ctx.types.int_struct);
 
         let add_llvm_type = ctx.function(2);
         let add_llvm_fn = ctx.module.add_function("Int__+", add_llvm_type, None);
-        let add_type = ctx
-            .get_metatype("Function".to_string(), vec![builder.indev; 2])
-            .unwrap();
+        let add_type = TypeId::gen_id("Function".to_string(), vec![TypeId("Int".to_string()); 2]);
         let add_fn = Function::from_function(ctx, add_llvm_fn, add_type);
         builder.add_static("+".to_string(), ValuePtr::PFunction(add_fn));
 
-        builder.build(llvm_ctx, ctx, generics)
+        builder.build(llvm_ctx, ctx, generics);
     }
 }
 
@@ -74,7 +72,7 @@ impl<'ctx> Copyable<'ctx> for Int<'ctx> {
     fn from_ptr(
         ctx: &LanguageContext<'ctx>,
         ptr: PointerValue<'ctx>,
-        _ptr_type: Metatype<'ctx>,
+        _ptr_type: TypeId,
         this_name: String,
         other_name: String,
     ) -> Self {
