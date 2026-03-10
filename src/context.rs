@@ -14,6 +14,7 @@ use inkwell::{
 };
 
 use crate::{
+    callable::Function,
     int::Int,
     scope::Scope,
     types::{Metatype, TypeId},
@@ -27,6 +28,7 @@ pub struct LanguageContext<'ctx> {
     pub builder: Builder<'ctx>,
     pub machine: TargetMachine,
     pub scope: Scope<'ctx>,
+    generic_gens: HashMap<String, fn(&'ctx Context, &mut LanguageContext<'ctx>, Vec<TypeId>)>,
 }
 
 impl<'ctx> LanguageContext<'ctx> {
@@ -54,18 +56,22 @@ impl<'ctx> LanguageContext<'ctx> {
             module,
             machine,
             scope: Scope::new(),
+            generic_gens: HashMap::<
+                String,
+                fn(&'ctx Context, &mut LanguageContext<'ctx>, Vec<TypeId>),
+            >::new(),
         }
     }
 
     pub fn init_metatypes(&mut self, context: &'ctx Context) {
+        self.generic_gens
+            .insert("Function".to_string(), Function::build_metatype);
         Int::build_metatype(context, self, Vec::<TypeId>::new());
         Metatype::build_metatype(context, self, Vec::<TypeId>::new());
     }
 
-    pub fn reserve_metatype(&mut self, name: String) -> TypeId {
-        let out = TypeId(name);
-        self.metatypes.insert(out.clone(), None);
-        out
+    pub fn reserve_metatype(&mut self, name: TypeId) {
+        self.metatypes.insert(name, None);
     }
 
     pub fn validate_id(&self, id: TypeId) {
@@ -74,9 +80,25 @@ impl<'ctx> LanguageContext<'ctx> {
             .expect(format!("Could not validate that type {id} exists!").as_str());
     }
 
+    pub fn get_with_gen(&mut self, llvm_ctx: &'ctx Context, id: TypeId) -> Metatype<'ctx> {
+        let maybe = self.maybe_get(id.clone());
+        if maybe.is_some() {
+            maybe.unwrap()
+        } else {
+            self.generic_gens
+                .get(&id.base)
+                .expect(format!("Base type {} has no generic builder.", id.base).as_str())(
+                llvm_ctx,
+                self,
+                id.generics.clone(),
+            );
+            self.get(id)
+        }
+    }
+
     pub fn get(&self, id: TypeId) -> Metatype<'ctx> {
-        self.maybe_get(id)
-            .expect("Cannot find type {id} or it is not fully initialized.")
+        self.maybe_get(id.clone())
+            .expect(format!("Cannot find type {id} or it is not fully initialized.").as_str())
     }
 
     pub fn maybe_get(&self, id: TypeId) -> Option<Metatype<'ctx>> {
@@ -96,6 +118,10 @@ impl<'ctx> LanguageContext<'ctx> {
             &vec![BasicMetadataTypeEnum::PointerType(self.ptr()); args as usize],
             false,
         )
+    }
+
+    pub fn get_struct_with_gen(&mut self, llvm_ctx: &'ctx Context, id: TypeId) -> StructType<'ctx> {
+        self.get_with_gen(llvm_ctx, id).obj_struct
     }
 
     pub fn get_struct(&self, id: TypeId) -> StructType<'ctx> {

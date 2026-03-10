@@ -15,7 +15,7 @@ impl<'ctx> Value<'ctx> for Unit {
     }
 
     fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeId {
-        TypeId("Unit".to_string())
+        TypeId::from_base("Unit".to_string())
     }
 
     fn get_ptr(&self) -> PointerValue<'ctx> {
@@ -32,8 +32,12 @@ impl<'ctx> ValueStatic<'ctx> for Unit {
         assert_eq!(generics.len(), 0);
         let obj_struct = llvm_ctx.opaque_struct_type("Unit");
         obj_struct.set_body(&[], false);
-        let mut builder =
-            MetatypeBuilder::new(ctx, BasicType::Unit, "Unit".to_string(), obj_struct);
+        let mut builder = MetatypeBuilder::new(
+            ctx,
+            BasicType::Unit,
+            TypeId::from_base("Unit".to_string()),
+            obj_struct,
+        );
         builder.build(llvm_ctx, ctx, generics);
     }
 }

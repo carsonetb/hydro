@@ -40,7 +40,7 @@ impl<'ctx> Value<'ctx> for Int<'ctx> {
     }
 
     fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeId {
-        TypeId("Int".to_string())
+        TypeId::from_base("Int".to_string())
     }
 
     fn get_ptr(&self) -> PointerValue<'ctx> {
@@ -55,13 +55,26 @@ impl<'ctx> ValueStatic<'ctx> for Int<'ctx> {
         generics: Vec<TypeId>,
     ) {
         assert_eq!(generics.len(), 0);
-        let mut builder =
-            MetatypeBuilder::new(ctx, BasicType::Int, "Int".to_string(), ctx.types.int_struct);
+        let mut builder = MetatypeBuilder::new(
+            ctx,
+            BasicType::Int,
+            TypeId::from_base("Int".to_string()),
+            ctx.types.int_struct,
+        );
 
         let add_llvm_type = ctx.function(2);
         let add_llvm_fn = ctx.module.add_function("Int__+", add_llvm_type, None);
-        let add_type = TypeId::gen_id("Function".to_string(), vec![TypeId("Int".to_string()); 2]);
-        let add_fn = Function::from_function(ctx, add_llvm_fn, add_type);
+        let add_type = TypeId::new(
+            "Function".to_string(),
+            vec![
+                TypeId::new(
+                    "Tuple".to_string(),
+                    vec![TypeId::from_base("Int".to_string()); 2],
+                ),
+                TypeId::from_base("Int".to_string()),
+            ],
+        );
+        let add_fn = Function::from_function(llvm_ctx, ctx, add_llvm_fn, add_type);
         builder.add_static("+".to_string(), ValuePtr::PFunction(add_fn));
 
         builder.build(llvm_ctx, ctx, generics);

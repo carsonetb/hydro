@@ -86,11 +86,11 @@ impl<'ctx> ValuePtr<'ctx> {
     pub fn from_ptr(
         ctx: &LanguageContext<'ctx>,
         ptr: PointerValue<'ctx>,
-        typ: Metatype<'ctx>,
+        typ: TypeId,
         this_name: String,
         other_name: String,
     ) -> Self {
-        match typ.base {
+        match ctx.get(typ.clone()).base {
             BasicType::Unit => panic!(),
             BasicType::Type => panic!(),
             BasicType::Int => Self::PInt(Int::from_ptr(ctx, ptr, typ, this_name, other_name)),

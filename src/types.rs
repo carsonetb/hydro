@@ -20,32 +20,39 @@ pub enum BasicType {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct TypeId(pub String);
+pub struct TypeId {
+    pub base: String,
+    pub generics: Vec<TypeId>,
+}
 
 impl TypeId {
-    pub fn base(&self) -> String {
-        self.0.split('<').next().unwrap().to_string()
+    pub fn new(base: String, generics: Vec<TypeId>) -> Self {
+        TypeId { base, generics }
+    }
+
+    pub fn from_base(base: String) -> Self {
+        TypeId {
+            base,
+            generics: Vec::<TypeId>::new(),
+        }
     }
 
     pub fn name(&self) -> String {
-        self.0.clone()
-    }
+        let mut generic_name = self.base.clone();
 
-    pub fn gen_id(name: String, generics: Vec<TypeId>) -> TypeId {
-        let mut generic_name = name.to_owned();
-
-        if !generics.is_empty() {
-            let generic_subnames: Vec<String> = generics.iter().map(|g| g.0.clone()).collect();
+        if !self.generics.is_empty() {
+            let generic_subnames: Vec<String> =
+                self.generics.iter().map(|g| g.base.clone()).collect();
             generic_name.push_str(&format!("<{}>", generic_subnames.join(", ")));
         }
 
-        TypeId(generic_name)
+        generic_name
     }
 }
 
 impl Display for TypeId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
+        self.name().fmt(f)
     }
 }
 
@@ -73,7 +80,7 @@ impl<'ctx> Value<'ctx> for Metatype<'ctx> {
     }
 
     fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeId {
-        TypeId("Type".to_string())
+        TypeId::from_base("Type".to_string())
     }
 
     fn get_ptr(&self) -> PointerValue<'ctx> {
@@ -91,7 +98,7 @@ impl<'ctx> ValueStatic<'ctx> for Metatype<'ctx> {
         let mut builder = MetatypeBuilder::new(
             ctx,
             BasicType::Type,
-            "Type".to_string(),
+            TypeId::from_base("Type".to_string()),
             ctx.types.type_struct,
         );
         builder.build(llvm_ctx, ctx, generics)
@@ -121,13 +128,14 @@ impl<'ctx> MetatypeBuilder<'ctx> {
     pub fn new(
         ctx: &mut LanguageContext<'ctx>,
         base: BasicType,
-        name: String,
+        id: TypeId,
         obj_struct: StructType<'ctx>,
     ) -> Self {
+        ctx.reserve_metatype(id.clone());
         Self {
-            id: ctx.reserve_metatype(name.clone()),
+            id: id.clone(),
             base,
-            name: name.clone(),
+            name: id.base,
             obj_struct,
             static_values: Vec::<BuilderStaticRepr<'ctx>>::new(),
         }
@@ -172,10 +180,7 @@ impl<'ctx> MetatypeBuilder<'ctx> {
             base: self.base.clone(),
             class_name: name.to_string(),
             id: self.id.clone(),
-            generics: generics
-                .iter()
-                .map(|g| ctx.get(g.clone()).unwrap())
-                .collect(),
+            generics: generics.iter().map(|g| ctx.get(g.clone())).collect(),
             members,
             static_ptr,
             static_struct,

@@ -12,15 +12,21 @@ use crate::{
 };
 
 pub trait Callable<'ctx> {
-    fn verify(&self, args: Vec<Metatype<'ctx>>) -> bool;
+    fn verify(&self, args: Vec<TypeId>) -> bool;
     fn call(
         &self,
         ctx: &LanguageContext<'ctx>,
         args: Vec<ValuePtr<'ctx>>,
         into_name: String,
     ) -> ValuePtr<'ctx>;
-    fn args(&self) -> Vec<Metatype<'ctx>>;
-    fn returns(&self) -> Metatype<'ctx>;
+    fn args(&self) -> Vec<TypeId>;
+    fn args_meta(&self, ctx: &LanguageContext<'ctx>) -> Vec<Metatype<'ctx>> {
+        self.args().iter().map(|a| ctx.get(a.clone())).collect()
+    }
+    fn returns(&self) -> TypeId;
+    fn returns_meta(&self, ctx: &LanguageContext<'ctx>) -> Metatype<'ctx> {
+        ctx.get(self.returns())
+    }
 }
 
 #[derive(Clone)]
@@ -32,12 +38,13 @@ pub struct Function<'ctx> {
 
 impl<'ctx> Function<'ctx> {
     pub fn new(
-        ctx: &LanguageContext<'ctx>,
+        llvm_ctx: &'ctx Context,
+        ctx: &mut LanguageContext<'ctx>,
         fn_ptr: PointerValue<'ctx>,
         typ: TypeId,
         name: String,
     ) -> Self {
-        let typ_struct = ctx.get_struct(typ.clone());
+        let typ_struct = ctx.get_struct_with_gen(llvm_ctx, typ.clone());
         let ptr = ctx
             .builder
             .build_alloca(typ_struct, &format!("{name}_ptr"))
@@ -55,11 +62,13 @@ impl<'ctx> Function<'ctx> {
     }
 
     pub fn from_function(
-        ctx: &LanguageContext<'ctx>,
+        llvm_ctx: &'ctx Context,
+        ctx: &mut LanguageContext<'ctx>,
         fn_val: FunctionValue<'ctx>,
         typ: TypeId,
     ) -> Self {
         Self::new(
+            llvm_ctx,
             ctx,
             fn_val.as_global_value().as_pointer_value(),
             typ,
@@ -69,7 +78,7 @@ impl<'ctx> Function<'ctx> {
 }
 
 impl<'ctx> Callable<'ctx> for Function<'ctx> {
-    fn verify(&self, args: Vec<Metatype<'ctx>>) -> bool {
+    fn verify(&self, args: Vec<TypeId>) -> bool {
         self.args() == args
     }
 
@@ -79,7 +88,7 @@ impl<'ctx> Callable<'ctx> for Function<'ctx> {
         args: Vec<ValuePtr<'ctx>>,
         into_name: String,
     ) -> ValuePtr<'ctx> {
-        assert!(self.verify(args.iter().map(|arg| ctx.get(arg.get_type(ctx))).collect()));
+        assert!(self.verify(args.iter().map(|arg| arg.get_type(ctx)).collect()));
 
         let arg_ptrs: Vec<BasicMetadataValueEnum> = args
             .iter()
@@ -104,16 +113,16 @@ impl<'ctx> Callable<'ctx> for Function<'ctx> {
                 into_name,
             )
         } else {
-            assert_eq!(self.returns().base, BasicType::Unit);
+            assert_eq!(self.returns_meta(ctx).base, BasicType::Unit);
             ValuePtr::PUnit(Unit {})
         }
     }
 
-    fn args(&self) -> Vec<Metatype<'ctx>> {
+    fn args(&self) -> Vec<TypeId> {
         todo!()
     }
 
-    fn returns(&self) -> Metatype<'ctx> {
+    fn returns(&self) -> TypeId {
         todo!()
     }
 }
@@ -139,14 +148,18 @@ impl<'ctx> ValueStatic<'ctx> for Function<'ctx> {
         generics: Vec<TypeId>,
     ) {
         assert_eq!(generics.len(), 2);
-        assert_eq!(generics[0].base(), "Tuple");
+        assert_eq!(generics[0].base, "Tuple");
 
-        let type_name = TypeId::gen_id("Function".to_string(), generics.clone());
-        let obj_struct = llvm_ctx.opaque_struct_type(type_name.0.as_str());
+        let type_name = TypeId::new("Function".to_string(), generics.clone());
+        let obj_struct = llvm_ctx.opaque_struct_type(&type_name.name().as_str());
         obj_struct.set_body(&[BasicTypeEnum::PointerType(ctx.types.ptr)], false);
 
-        let mut builder =
-            MetatypeBuilder::new(ctx, BasicType::Function, "Function".to_string(), obj_struct);
+        let mut builder = MetatypeBuilder::new(
+            ctx,
+            BasicType::Function,
+            TypeId::from_base("Function".to_string()),
+            obj_struct,
+        );
         builder.build(llvm_ctx, ctx, generics);
     }
 }
@@ -159,21 +172,22 @@ impl<'ctx> Copyable<'ctx> for Function<'ctx> {
         this_name: String,
         other_name: String,
     ) -> Self {
-        let value_ptr = ctx
-            .builder
-            .build_struct_gep(
-                ctx.types.int_struct,
-                ptr,
-                0,
-                &format!("{this_name}_raw_ptr"),
-            )
-            .unwrap();
-        let value = ctx
-            .builder
-            .build_load(ctx.types.int, value_ptr, &format!("{this_name}_raw"))
-            .unwrap()
-            .into_pointer_value();
-        Self::new(ctx, value, ptr_type, other_name)
+        todo!();
+        // let value_ptr = ctx
+        //     .builder
+        //     .build_struct_gep(
+        //         ctx.types.int_struct,
+        //         ptr,
+        //         0,
+        //         &format!("{this_name}_raw_ptr"),
+        //     )
+        //     .unwrap();
+        // let value = ctx
+        //     .builder
+        //     .build_load(ctx.types.int, value_ptr, &format!("{this_name}_raw"))
+        //     .unwrap()
+        //     .into_pointer_value();
+        // Self::new(ctx, value, ptr_type, other_name)
     }
 
     fn from(
