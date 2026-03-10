@@ -1,11 +1,12 @@
 use crate::{
+    callable::Function,
     context::{LLVMTypes, LanguageContext},
-    types::{Metatype, MetatypeBuilder},
-    value::{Copyable, Literal, Value, ValueField},
+    types::{BasicType, Metatype, MetatypeBuilder},
+    value::{Copyable, Field, Literal, Value, ValuePtr, ValueStatic},
 };
 use inkwell::{
     context::Context,
-    types::StructType,
+    types::{FunctionType, StructType},
     values::{IntValue, PointerValue},
 };
 
@@ -34,17 +35,38 @@ impl<'ctx> Int<'ctx> {
 }
 
 impl<'ctx> Value<'ctx> for Int<'ctx> {
-    fn member(&self, ctx: &LanguageContext<'ctx>, name: String) -> Option<&ValueField<'ctx>> {
-        Option::<&ValueField<'ctx>>::None
+    fn member(&self, _ctx: &LanguageContext<'ctx>, _name: String) -> Option<&Field<'ctx>> {
+        Option::<&Field<'ctx>>::None
     }
 
     fn get_type(&self, ctx: &LanguageContext<'ctx>) -> Metatype<'ctx> {
-        ctx.get_metatype("Int".to_string()).unwrap()
+        ctx.get_base_metatype("Int".to_string()).unwrap()
     }
 
-    fn build_metatype(llvm_ctx: &'ctx Context, ctx: &LanguageContext<'ctx>) -> Metatype<'ctx> {
-        let mut builder = MetatypeBuilder::new("Int".to_string(), ctx.types.int_struct);
-        builder.build(llvm_ctx, ctx)
+    fn get_ptr(&self) -> PointerValue<'ctx> {
+        self.ptr
+    }
+}
+
+impl<'ctx> ValueStatic<'ctx> for Int<'ctx> {
+    fn build_metatype(
+        llvm_ctx: &'ctx Context,
+        ctx: &LanguageContext<'ctx>,
+        generics: Vec<Metatype<'ctx>>,
+    ) -> Metatype<'ctx> {
+        assert_eq!(generics.len(), 0);
+        let mut builder =
+            MetatypeBuilder::new(BasicType::Int, "Int".to_string(), ctx.types.int_struct);
+
+        let add_llvm_type = ctx.function(2);
+        let add_llvm_fn = ctx.module.add_function("Int__+", add_llvm_type, None);
+        let add_type = ctx
+            .get_metatype("Function".to_string(), vec![builder.indev; 2])
+            .unwrap();
+        let add_fn = Function::from_function(ctx, add_llvm_fn, add_type);
+        builder.add_static("+".to_string(), ValuePtr::PFunction(add_fn));
+
+        builder.build(llvm_ctx, ctx, generics)
     }
 }
 
@@ -52,6 +74,7 @@ impl<'ctx> Copyable<'ctx> for Int<'ctx> {
     fn from_ptr(
         ctx: &LanguageContext<'ctx>,
         ptr: PointerValue<'ctx>,
+        _ptr_type: Metatype<'ctx>,
         this_name: String,
         other_name: String,
     ) -> Self {
@@ -78,7 +101,7 @@ impl<'ctx> Copyable<'ctx> for Int<'ctx> {
         this_name: String,
         other_name: String,
     ) -> Self {
-        Int::from_ptr(ctx, other.ptr, this_name, other_name)
+        Int::from_ptr(ctx, other.ptr, other.get_type(ctx), this_name, other_name)
     }
 }
 

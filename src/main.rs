@@ -1,3 +1,4 @@
+mod callable;
 mod codegen;
 mod compile;
 mod context;
@@ -6,16 +7,11 @@ mod int;
 mod parser;
 mod scope;
 mod types;
+mod unit;
 mod value;
 
-use std::{
-    error::Error,
-    path::{Path, PathBuf},
-    process::exit,
-};
+use std::{error::Error, path::Path};
 
-use ariadne::{Color, Label, Report, ReportKind, Source};
-use chumsky::Parser;
 use inkwell::{
     context::Context,
     targets::{InitializationConfig, Target},

@@ -6,11 +6,14 @@ use inkwell::{
     context::Context,
     module::Module,
     targets::{CodeModel, RelocMode, Target, TargetMachine},
-    types::{BasicTypeEnum, FloatType, IntType, PointerType, StructType, VoidType},
+    types::{
+        BasicMetadataTypeEnum, BasicTypeEnum, FloatType, FunctionType, IntType, PointerType,
+        StructType, VoidType,
+    },
     values::IntValue,
 };
 
-use crate::{int::Int, scope::Scope, types::Metatype, value::Value};
+use crate::{int::Int, scope::Scope, types::Metatype, value::ValueStatic};
 
 pub struct LanguageContext<'ctx> {
     pub metatypes: HashMap<String, Metatype<'ctx>>,
@@ -50,18 +53,41 @@ impl<'ctx> LanguageContext<'ctx> {
     }
 
     pub fn init_metatypes(&mut self, context: &'ctx Context) {
-        self.metatypes
-            .insert("Int".to_string(), Int::build_metatype(context, self));
-        self.metatypes
-            .insert("Type".to_string(), Metatype::build_metatype(context, self));
+        self.metatypes.insert(
+            "Int".to_string(),
+            Int::build_metatype(context, self, Vec::<Metatype<'ctx>>::new()),
+        );
+        self.metatypes.insert(
+            "Type".to_string(),
+            Metatype::build_metatype(context, self, Vec::<Metatype<'ctx>>::new()),
+        );
     }
 
-    pub fn get_metatype(&self, name: String) -> Option<Metatype<'ctx>> {
+    pub fn get_base_metatype(&self, name: String) -> Option<Metatype<'ctx>> {
         self.metatypes.get(&name).cloned()
+    }
+
+    pub fn get_metatype(
+        &self,
+        base_name: String,
+        generics: Vec<Metatype<'ctx>>,
+    ) -> Option<Metatype<'ctx>> {
+        self.get_base_metatype(Metatype::gen_name(base_name, &generics))
     }
 
     pub fn int(&self, value: u64) -> IntValue<'ctx> {
         self.types.int.const_int(value, false)
+    }
+
+    pub fn ptr(&self) -> PointerType<'ctx> {
+        self.types.ptr
+    }
+
+    pub fn function(&self, args: u32) -> FunctionType<'ctx> {
+        self.ptr().fn_type(
+            &vec![BasicMetadataTypeEnum::PointerType(self.ptr()); args as usize],
+            false,
+        )
     }
 
     pub fn get_struct(&self, type_name: String) -> Option<StructType<'ctx>> {

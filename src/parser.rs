@@ -47,19 +47,19 @@ pub enum Primary {
 
 #[derive(Debug)]
 pub enum Atom {
-    Literal(Literal),
+    Literal(ParseLiteral),
 }
 
 #[derive(Debug)]
-pub enum Literal {
+pub enum ParseLiteral {
     Error(ErrorKind),
     Int(u32),
 }
 
-pub fn literal<'src>() -> impl Parser<'src, &'src str, Literal, extra::Err<Rich<'src, char>>> {
+pub fn literal<'src>() -> impl Parser<'src, &'src str, ParseLiteral, extra::Err<Rich<'src, char>>> {
     text::int(10).padded().from_str().map(|r| match r {
-        Ok(int) => Literal::Int(int),
-        Err(_) => Literal::Error(ErrorKind::Unknown),
+        Ok(int) => ParseLiteral::Int(int),
+        Err(_) => ParseLiteral::Error(ErrorKind::Unknown),
     })
 }
 

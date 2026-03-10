@@ -1,29 +1,32 @@
-use std::marker::PhantomData;
-
+use enum_dispatch::enum_dispatch;
 use inkwell::{
     context::Context,
     values::{AnyValue, PointerValue},
 };
 
-use crate::{context::LanguageContext, int::Int, types::Metatype};
+use crate::{
+    callable::Function,
+    context::LanguageContext,
+    int::Int,
+    types::{BasicType, Metatype},
+    unit::Unit,
+};
 
-#[derive(Clone)]
-pub struct Field<'ctx, T: Copyable<'ctx>> {
+#[derive(Debug, Clone)]
+pub struct Field<'ctx> {
     name: String,
     typ: Metatype<'ctx>,
     invalid: bool,
     field_ptr: PointerValue<'ctx>,
-    _marker: PhantomData<T>,
 }
 
-impl<'ctx, T: Copyable<'ctx>> Field<'ctx, T> {
+impl<'ctx> Field<'ctx> {
     pub fn new(field_ptr: PointerValue<'ctx>, name: String, typ: Metatype<'ctx>) -> Self {
         Self {
             name,
             typ,
             invalid: false,
             field_ptr,
-            _marker: PhantomData,
         }
     }
 
@@ -36,7 +39,17 @@ impl<'ctx, T: Copyable<'ctx>> Field<'ctx, T> {
         Self::new(field_ptr, name, from.get_type(ctx))
     }
 
-    pub fn load(&self, ctx: &LanguageContext<'ctx>, into_name: String) -> Option<T> {
+    pub fn store(&self, ctx: &LanguageContext<'ctx>, from: ValuePtr<'ctx>) {
+        ctx.builder
+            .build_store(self.field_ptr, from.get_ptr())
+            .unwrap();
+    }
+
+    pub fn load<T: Copyable<'ctx>>(
+        &self,
+        ctx: &LanguageContext<'ctx>,
+        into_name: String,
+    ) -> Option<T> {
         if self.invalid {
             None
         } else {
@@ -46,7 +59,13 @@ impl<'ctx, T: Copyable<'ctx>> Field<'ctx, T> {
                 .build_load(ctx.types.ptr, self.field_ptr, &format!("{name}_ptr"))
                 .unwrap()
                 .into_pointer_value();
-            Some(T::from_ptr(ctx, value_ptr, self.name.clone(), into_name))
+            Some(T::from_ptr(
+                ctx,
+                value_ptr,
+                self.typ.clone(),
+                self.name.clone(),
+                into_name,
+            ))
         }
     }
 
@@ -56,66 +75,56 @@ impl<'ctx, T: Copyable<'ctx>> Field<'ctx, T> {
     }
 }
 
+#[enum_dispatch]
 pub enum ValuePtr<'ctx> {
+    PUnit(Unit),
     PInt(Int<'ctx>),
+    PFunction(Function<'ctx>),
 }
 
 impl<'ctx> ValuePtr<'ctx> {
-    pub fn get_ptr(&self) -> PointerValue<'ctx> {
-        match self {
-            ValuePtr::PInt(int) => int.ptr,
-        }
-    }
-
-    pub fn get_type(&self, ctx: &LanguageContext<'ctx>) -> Metatype<'ctx> {
-        match self {
-            ValuePtr::PInt(int) => int.get_type(ctx),
-        }
-    }
-}
-
-#[derive(Clone)]
-pub enum ValueField<'ctx> {
-    RInt(Field<'ctx, Int<'ctx>>),
-}
-
-impl<'ctx> ValueField<'ctx> {
-    pub fn from_value(ctx: &LanguageContext<'ctx>, from: ValuePtr<'ctx>, name: String) -> Self {
-        match from {
-            ValuePtr::PInt(_) => Self::RInt(Field::<Int>::from_value(ctx, from, name)),
-        }
-    }
-
-    pub fn exit_scope(&mut self) {
-        match self {
-            ValueField::RInt(int) => int.exit_scope(),
-        }
-    }
-
-    pub fn get_as_int(&self, ctx: &LanguageContext<'ctx>, name: String) -> Option<Int<'ctx>> {
-        match self {
-            ValueField::RInt(int) => Some(
-                int.load(ctx, name)
-                    .expect("Cannot get as int because field is invalidated!"),
-            ),
-            _ => None,
+    pub fn from_ptr(
+        ctx: &LanguageContext<'ctx>,
+        ptr: PointerValue<'ctx>,
+        typ: Metatype<'ctx>,
+        this_name: String,
+        other_name: String,
+    ) -> Self {
+        match typ.base {
+            BasicType::Unit => panic!(),
+            BasicType::Type => panic!(),
+            BasicType::Int => Self::PInt(Int::from_ptr(ctx, ptr, typ, this_name, other_name)),
+            BasicType::Function => {
+                Self::PFunction(Function::from_ptr(ctx, ptr, typ, this_name, other_name))
+            }
         }
     }
 }
 
+#[enum_dispatch(ValuePtr, IndevCallable)]
 pub trait Value<'ctx> {
-    fn member(&self, ctx: &LanguageContext<'ctx>, name: String) -> Option<&ValueField<'ctx>>;
+    fn member(&self, ctx: &LanguageContext<'ctx>, name: String) -> Option<&Field<'ctx>>;
     fn get_type(&self, ctx: &LanguageContext<'ctx>) -> Metatype<'ctx>;
-    fn build_metatype(llvm_ctx: &'ctx Context, ctx: &LanguageContext<'ctx>) -> Metatype<'ctx>;
+    fn get_ptr(&self) -> PointerValue<'ctx>;
+}
+
+pub trait ValueStatic<'ctx>: Value<'ctx> {
+    fn build_metatype(
+        llvm_ctx: &'ctx Context,
+        ctx: &LanguageContext<'ctx>,
+        generics: Vec<Metatype<'ctx>>,
+    ) -> Metatype<'ctx>;
 }
 
 pub trait Copyable<'ctx>: Value<'ctx> {
     fn from_ptr(
         ctx: &LanguageContext<'ctx>,
         ptr: PointerValue<'ctx>,
+        ptr_type: Metatype<'ctx>,
         this_name: String,
         other_name: String,
     ) -> Self;
+
     fn from(
         ctx: &LanguageContext<'ctx>,
         other: Self,
