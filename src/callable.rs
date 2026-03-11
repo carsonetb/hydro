@@ -1,29 +1,29 @@
 use inkwell::{
     context::Context,
-    types::{BasicMetadataTypeEnum, BasicTypeEnum},
+    types::{BasicMetadataTypeEnum, BasicTypeEnum, StructType},
     values::{BasicMetadataValueEnum, FunctionValue, PointerValue},
 };
 
 use crate::{
     context::LanguageContext,
-    types::{BasicType, Metatype, MetatypeBuilder, TypeId},
+    types::{BasicType, Metatype, MetatypeBuilder, TypeID},
     unit::Unit,
     value::{Copyable, Field, Value, ValuePtr, ValueStatic},
 };
 
 pub trait Callable<'ctx> {
-    fn verify(&self, args: Vec<TypeId>) -> bool;
+    fn verify(&self, args: Vec<TypeID>) -> bool;
     fn call(
         &self,
         ctx: &LanguageContext<'ctx>,
         args: Vec<ValuePtr<'ctx>>,
         into_name: String,
     ) -> ValuePtr<'ctx>;
-    fn args(&self) -> Vec<TypeId>;
+    fn args(&self) -> Vec<TypeID>;
     fn args_meta(&self, ctx: &LanguageContext<'ctx>) -> Vec<Metatype<'ctx>> {
         self.args().iter().map(|a| ctx.get(a.clone())).collect()
     }
-    fn returns(&self) -> TypeId;
+    fn returns(&self) -> TypeID;
     fn returns_meta(&self, ctx: &LanguageContext<'ctx>) -> Metatype<'ctx> {
         ctx.get(self.returns())
     }
@@ -32,26 +32,25 @@ pub trait Callable<'ctx> {
 #[derive(Clone)]
 pub struct Function<'ctx> {
     name: String,
-    metatype: TypeId,
+    metatype: TypeID,
     pub ptr: PointerValue<'ctx>,
 }
 
 impl<'ctx> Function<'ctx> {
-    pub fn new(
-        llvm_ctx: &'ctx Context,
-        ctx: &mut LanguageContext<'ctx>,
+    fn new_with_struct(
+        ctx: &LanguageContext<'ctx>,
+        type_struct: StructType<'ctx>,
         fn_ptr: PointerValue<'ctx>,
-        typ: TypeId,
+        typ: TypeID,
         name: String,
     ) -> Self {
-        let typ_struct = ctx.get_struct_with_gen(llvm_ctx, typ.clone());
         let ptr = ctx
             .builder
-            .build_alloca(typ_struct, &format!("{name}_ptr"))
+            .build_alloca(type_struct, &format!("FN__{name}_ptr"))
             .unwrap();
         let value_ptr = ctx
             .builder
-            .build_struct_gep(typ_struct, ptr, 0, &format!("{name}_value_ptr"))
+            .build_struct_gep(type_struct, ptr, 0, &format!("FN__{name}_raw_ptr"))
             .unwrap();
         ctx.builder.build_store(value_ptr, fn_ptr).unwrap();
         Self {
@@ -61,11 +60,22 @@ impl<'ctx> Function<'ctx> {
         }
     }
 
+    pub fn new(
+        llvm_ctx: &'ctx Context,
+        ctx: &mut LanguageContext<'ctx>,
+        fn_ptr: PointerValue<'ctx>,
+        typ: TypeID,
+        name: String,
+    ) -> Self {
+        let struct_type = ctx.get_struct_with_gen(llvm_ctx, typ.clone());
+        Self::new_with_struct(ctx, struct_type, fn_ptr, typ, name)
+    }
+
     pub fn from_function(
         llvm_ctx: &'ctx Context,
         ctx: &mut LanguageContext<'ctx>,
         fn_val: FunctionValue<'ctx>,
-        typ: TypeId,
+        typ: TypeID,
     ) -> Self {
         Self::new(
             llvm_ctx,
@@ -78,7 +88,7 @@ impl<'ctx> Function<'ctx> {
 }
 
 impl<'ctx> Callable<'ctx> for Function<'ctx> {
-    fn verify(&self, args: Vec<TypeId>) -> bool {
+    fn verify(&self, args: Vec<TypeID>) -> bool {
         self.args() == args
     }
 
@@ -102,7 +112,7 @@ impl<'ctx> Callable<'ctx> for Function<'ctx> {
             .unwrap()
             .try_as_basic_value();
 
-        if result.is_instruction() {
+        if result.is_basic() {
             ValuePtr::from_ptr(
                 ctx,
                 result
@@ -118,12 +128,12 @@ impl<'ctx> Callable<'ctx> for Function<'ctx> {
         }
     }
 
-    fn args(&self) -> Vec<TypeId> {
-        todo!()
+    fn args(&self) -> Vec<TypeID> {
+        self.metatype.generics[0].generics.clone()
     }
 
-    fn returns(&self) -> TypeId {
-        todo!()
+    fn returns(&self) -> TypeID {
+        self.metatype.generics[1].clone()
     }
 }
 
@@ -132,7 +142,7 @@ impl<'ctx> Value<'ctx> for Function<'ctx> {
         Option::<&Field<'ctx>>::None
     }
 
-    fn get_type(&self, _ctx: &LanguageContext<'ctx>) -> TypeId {
+    fn get_type(&self, _ctx: &LanguageContext<'ctx>) -> TypeID {
         self.metatype.clone()
     }
 
@@ -145,19 +155,19 @@ impl<'ctx> ValueStatic<'ctx> for Function<'ctx> {
     fn build_metatype(
         llvm_ctx: &'ctx Context,
         ctx: &mut LanguageContext<'ctx>,
-        generics: Vec<TypeId>,
+        generics: Vec<TypeID>,
     ) {
         assert_eq!(generics.len(), 2);
         assert_eq!(generics[0].base, "Tuple");
 
-        let type_name = TypeId::new("Function".to_string(), generics.clone());
+        let type_name = TypeID::new("Function".to_string(), generics.clone());
         let obj_struct = llvm_ctx.opaque_struct_type(&type_name.name().as_str());
         obj_struct.set_body(&[BasicTypeEnum::PointerType(ctx.types.ptr)], false);
 
         let mut builder = MetatypeBuilder::new(
             ctx,
             BasicType::Function,
-            TypeId::from_base("Function".to_string()),
+            TypeID::new("Function".to_string(), generics.clone()),
             obj_struct,
         );
         builder.build(llvm_ctx, ctx, generics);
@@ -168,26 +178,27 @@ impl<'ctx> Copyable<'ctx> for Function<'ctx> {
     fn from_ptr(
         ctx: &LanguageContext<'ctx>,
         ptr: PointerValue<'ctx>,
-        ptr_type: TypeId,
+        ptr_type: TypeID,
         this_name: String,
         other_name: String,
     ) -> Self {
-        todo!();
-        // let value_ptr = ctx
-        //     .builder
-        //     .build_struct_gep(
-        //         ctx.types.int_struct,
-        //         ptr,
-        //         0,
-        //         &format!("{this_name}_raw_ptr"),
-        //     )
-        //     .unwrap();
-        // let value = ctx
-        //     .builder
-        //     .build_load(ctx.types.int, value_ptr, &format!("{this_name}_raw"))
-        //     .unwrap()
-        //     .into_pointer_value();
-        // Self::new(ctx, value, ptr_type, other_name)
+        let fn_struct = ctx.get_struct(ptr_type.clone());
+        let fn_ptr_ptr = ctx
+            .builder
+            .build_struct_gep(fn_struct, ptr, 0, &format!("{this_name}_raw_ptr"))
+            .unwrap();
+        let fn_ptr = ctx
+            .builder
+            .build_load(ctx.types.ptr, fn_ptr_ptr, &format!("{this_name}_raw"))
+            .unwrap()
+            .into_pointer_value();
+        Self::new_with_struct(
+            ctx,
+            ctx.get_struct(ptr_type.clone()),
+            fn_ptr,
+            ptr_type,
+            other_name,
+        )
     }
 
     fn from(

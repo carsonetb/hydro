@@ -2,7 +2,7 @@ use inkwell::values::PointerValue;
 
 use crate::{
     context::LanguageContext,
-    types::{BasicType, Metatype, MetatypeBuilder, TypeId},
+    types::{BasicType, Metatype, MetatypeBuilder, TypeID},
     value::{Field, Value, ValueStatic},
 };
 
@@ -14,8 +14,8 @@ impl<'ctx> Value<'ctx> for Unit {
         panic!()
     }
 
-    fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeId {
-        TypeId::from_base("Unit".to_string())
+    fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeID {
+        TypeID::from_base("Unit".to_string())
     }
 
     fn get_ptr(&self) -> PointerValue<'ctx> {
@@ -27,7 +27,7 @@ impl<'ctx> ValueStatic<'ctx> for Unit {
     fn build_metatype(
         llvm_ctx: &'ctx inkwell::context::Context,
         ctx: &mut LanguageContext<'ctx>,
-        generics: Vec<TypeId>,
+        generics: Vec<TypeID>,
     ) {
         assert_eq!(generics.len(), 0);
         let obj_struct = llvm_ctx.opaque_struct_type("Unit");
@@ -35,7 +35,7 @@ impl<'ctx> ValueStatic<'ctx> for Unit {
         let mut builder = MetatypeBuilder::new(
             ctx,
             BasicType::Unit,
-            TypeId::from_base("Unit".to_string()),
+            TypeID::from_base("Unit".to_string()),
             obj_struct,
         );
         builder.build(llvm_ctx, ctx, generics);

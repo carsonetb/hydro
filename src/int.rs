@@ -1,7 +1,7 @@
 use crate::{
     callable::Function,
     context::{LLVMTypes, LanguageContext},
-    types::{BasicType, Metatype, MetatypeBuilder, TypeId},
+    types::{BasicType, Metatype, MetatypeBuilder, TypeID},
     value::{Copyable, Field, Literal, Value, ValuePtr, ValueStatic},
 };
 use inkwell::{
@@ -39,8 +39,8 @@ impl<'ctx> Value<'ctx> for Int<'ctx> {
         Option::<&Field<'ctx>>::None
     }
 
-    fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeId {
-        TypeId::from_base("Int".to_string())
+    fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeID {
+        TypeID::from_base("Int".to_string())
     }
 
     fn get_ptr(&self) -> PointerValue<'ctx> {
@@ -52,26 +52,51 @@ impl<'ctx> ValueStatic<'ctx> for Int<'ctx> {
     fn build_metatype(
         llvm_ctx: &'ctx Context,
         ctx: &mut LanguageContext<'ctx>,
-        generics: Vec<TypeId>,
+        generics: Vec<TypeID>,
     ) {
         assert_eq!(generics.len(), 0);
         let mut builder = MetatypeBuilder::new(
             ctx,
             BasicType::Int,
-            TypeId::from_base("Int".to_string()),
+            TypeID::from_base("Int".to_string()),
             ctx.types.int_struct,
         );
 
         let add_llvm_type = ctx.function(2);
         let add_llvm_fn = ctx.module.add_function("Int__+", add_llvm_type, None);
-        let add_type = TypeId::new(
+        let entry = llvm_ctx.append_basic_block(add_llvm_fn, "entry");
+        let old_block = ctx.builder.get_insert_block().unwrap();
+        ctx.builder.position_at_end(entry);
+
+        let params: Vec<Int<'ctx>> = add_llvm_fn
+            .get_params()
+            .iter()
+            .map(|p| {
+                Int::from_ptr(
+                    ctx,
+                    p.into_pointer_value(),
+                    TypeID::from_base("Int".to_string()),
+                    "arg".to_string(),
+                    "arg_storage".to_string(),
+                )
+            })
+            .collect();
+        let result = ctx
+            .builder
+            .build_int_add(params[0].raw(ctx), params[1].raw(ctx), "add_result")
+            .unwrap();
+        let as_int = Int::new(ctx, result, "result_ptr".to_string());
+        ctx.builder.build_return(Some(&as_int.get_ptr())).unwrap();
+        ctx.builder.position_at_end(old_block);
+
+        let add_type = TypeID::new(
             "Function".to_string(),
             vec![
-                TypeId::new(
+                TypeID::new(
                     "Tuple".to_string(),
-                    vec![TypeId::from_base("Int".to_string()); 2],
+                    vec![TypeID::from_base("Int".to_string()); 2],
                 ),
-                TypeId::from_base("Int".to_string()),
+                TypeID::from_base("Int".to_string()),
             ],
         );
         let add_fn = Function::from_function(llvm_ctx, ctx, add_llvm_fn, add_type);
@@ -85,7 +110,7 @@ impl<'ctx> Copyable<'ctx> for Int<'ctx> {
     fn from_ptr(
         ctx: &LanguageContext<'ctx>,
         ptr: PointerValue<'ctx>,
-        _ptr_type: TypeId,
+        _ptr_type: TypeID,
         this_name: String,
         other_name: String,
     ) -> Self {

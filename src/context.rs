@@ -17,18 +17,19 @@ use crate::{
     callable::Function,
     int::Int,
     scope::Scope,
-    types::{Metatype, TypeId},
+    tuple::Tuple,
+    types::{Metatype, TypeID},
     value::ValueStatic,
 };
 
 pub struct LanguageContext<'ctx> {
-    pub metatypes: HashMap<TypeId, Option<Metatype<'ctx>>>,
+    pub metatypes: HashMap<TypeID, Option<Metatype<'ctx>>>,
     pub types: LLVMTypes<'ctx>,
     pub module: Module<'ctx>,
     pub builder: Builder<'ctx>,
     pub machine: TargetMachine,
     pub scope: Scope<'ctx>,
-    generic_gens: HashMap<String, fn(&'ctx Context, &mut LanguageContext<'ctx>, Vec<TypeId>)>,
+    generic_gens: HashMap<String, fn(&'ctx Context, &mut LanguageContext<'ctx>, Vec<TypeID>)>,
 }
 
 impl<'ctx> LanguageContext<'ctx> {
@@ -50,7 +51,7 @@ impl<'ctx> LanguageContext<'ctx> {
         let builder = context.create_builder();
 
         Self {
-            metatypes: HashMap::<TypeId, Option<Metatype<'ctx>>>::new(),
+            metatypes: HashMap::<TypeID, Option<Metatype<'ctx>>>::new(),
             types: LLVMTypes::new(context),
             builder,
             module,
@@ -58,7 +59,7 @@ impl<'ctx> LanguageContext<'ctx> {
             scope: Scope::new(),
             generic_gens: HashMap::<
                 String,
-                fn(&'ctx Context, &mut LanguageContext<'ctx>, Vec<TypeId>),
+                fn(&'ctx Context, &mut LanguageContext<'ctx>, Vec<TypeID>),
             >::new(),
         }
     }
@@ -66,21 +67,23 @@ impl<'ctx> LanguageContext<'ctx> {
     pub fn init_metatypes(&mut self, context: &'ctx Context) {
         self.generic_gens
             .insert("Function".to_string(), Function::build_metatype);
-        Int::build_metatype(context, self, Vec::<TypeId>::new());
-        Metatype::build_metatype(context, self, Vec::<TypeId>::new());
+        self.generic_gens
+            .insert("Tuple".to_string(), Tuple::build_metatype);
+        Int::build_metatype(context, self, Vec::<TypeID>::new());
+        Metatype::build_metatype(context, self, Vec::<TypeID>::new());
     }
 
-    pub fn reserve_metatype(&mut self, name: TypeId) {
+    pub fn reserve_metatype(&mut self, name: TypeID) {
         self.metatypes.insert(name, None);
     }
 
-    pub fn validate_id(&self, id: TypeId) {
+    pub fn validate_id(&self, id: TypeID) {
         self.metatypes
             .get(&id)
             .expect(format!("Could not validate that type {id} exists!").as_str());
     }
 
-    pub fn get_with_gen(&mut self, llvm_ctx: &'ctx Context, id: TypeId) -> Metatype<'ctx> {
+    pub fn get_with_gen(&mut self, llvm_ctx: &'ctx Context, id: TypeID) -> Metatype<'ctx> {
         let maybe = self.maybe_get(id.clone());
         if maybe.is_some() {
             maybe.unwrap()
@@ -96,12 +99,12 @@ impl<'ctx> LanguageContext<'ctx> {
         }
     }
 
-    pub fn get(&self, id: TypeId) -> Metatype<'ctx> {
+    pub fn get(&self, id: TypeID) -> Metatype<'ctx> {
         self.maybe_get(id.clone())
             .expect(format!("Cannot find type {id} or it is not fully initialized.").as_str())
     }
 
-    pub fn maybe_get(&self, id: TypeId) -> Option<Metatype<'ctx>> {
+    pub fn maybe_get(&self, id: TypeID) -> Option<Metatype<'ctx>> {
         self.metatypes.get(&id).cloned().flatten()
     }
 
@@ -120,11 +123,11 @@ impl<'ctx> LanguageContext<'ctx> {
         )
     }
 
-    pub fn get_struct_with_gen(&mut self, llvm_ctx: &'ctx Context, id: TypeId) -> StructType<'ctx> {
+    pub fn get_struct_with_gen(&mut self, llvm_ctx: &'ctx Context, id: TypeID) -> StructType<'ctx> {
         self.get_with_gen(llvm_ctx, id).obj_struct
     }
 
-    pub fn get_struct(&self, id: TypeId) -> StructType<'ctx> {
+    pub fn get_struct(&self, id: TypeID) -> StructType<'ctx> {
         self.get(id).obj_struct
     }
 }

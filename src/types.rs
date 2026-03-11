@@ -16,24 +16,25 @@ pub enum BasicType {
     Unit,
     Type,
     Int,
+    Tuple,
     Function,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct TypeId {
+pub struct TypeID {
     pub base: String,
-    pub generics: Vec<TypeId>,
+    pub generics: Vec<TypeID>,
 }
 
-impl TypeId {
-    pub fn new(base: String, generics: Vec<TypeId>) -> Self {
-        TypeId { base, generics }
+impl TypeID {
+    pub fn new(base: String, generics: Vec<TypeID>) -> Self {
+        TypeID { base, generics }
     }
 
     pub fn from_base(base: String) -> Self {
-        TypeId {
+        TypeID {
             base,
-            generics: Vec::<TypeId>::new(),
+            generics: Vec::<TypeID>::new(),
         }
     }
 
@@ -41,8 +42,7 @@ impl TypeId {
         let mut generic_name = self.base.clone();
 
         if !self.generics.is_empty() {
-            let generic_subnames: Vec<String> =
-                self.generics.iter().map(|g| g.base.clone()).collect();
+            let generic_subnames: Vec<String> = self.generics.iter().map(|g| g.name()).collect();
             generic_name.push_str(&format!("<{}>", generic_subnames.join(", ")));
         }
 
@@ -50,7 +50,7 @@ impl TypeId {
     }
 }
 
-impl Display for TypeId {
+impl Display for TypeID {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.name().fmt(f)
     }
@@ -60,8 +60,8 @@ impl Display for TypeId {
 pub struct Metatype<'ctx> {
     pub base: BasicType,
     pub class_name: String,
-    pub id: TypeId,
-    pub generics: Vec<Metatype<'ctx>>,
+    pub id: TypeID,
+    pub generics: Vec<TypeID>,
     members: HashMap<String, Field<'ctx>>,
     static_ptr: PointerValue<'ctx>,
     pub static_struct: StructType<'ctx>,
@@ -79,8 +79,8 @@ impl<'ctx> Value<'ctx> for Metatype<'ctx> {
         }
     }
 
-    fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeId {
-        TypeId::from_base("Type".to_string())
+    fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeID {
+        TypeID::from_base("Type".to_string())
     }
 
     fn get_ptr(&self) -> PointerValue<'ctx> {
@@ -92,13 +92,13 @@ impl<'ctx> ValueStatic<'ctx> for Metatype<'ctx> {
     fn build_metatype(
         llvm_ctx: &'ctx Context,
         ctx: &mut LanguageContext<'ctx>,
-        generics: Vec<TypeId>,
+        generics: Vec<TypeID>,
     ) {
         assert_eq!(generics.len(), 0);
         let mut builder = MetatypeBuilder::new(
             ctx,
             BasicType::Type,
-            TypeId::from_base("Type".to_string()),
+            TypeID::from_base("Type".to_string()),
             ctx.types.type_struct,
         );
         builder.build(llvm_ctx, ctx, generics)
@@ -117,7 +117,7 @@ struct BuilderStaticRepr<'ctx> {
 }
 
 pub struct MetatypeBuilder<'ctx> {
-    id: TypeId,
+    id: TypeID,
     base: BasicType,
     name: String,
     obj_struct: StructType<'ctx>,
@@ -128,7 +128,7 @@ impl<'ctx> MetatypeBuilder<'ctx> {
     pub fn new(
         ctx: &mut LanguageContext<'ctx>,
         base: BasicType,
-        id: TypeId,
+        id: TypeID,
         obj_struct: StructType<'ctx>,
     ) -> Self {
         ctx.reserve_metatype(id.clone());
@@ -149,20 +149,29 @@ impl<'ctx> MetatypeBuilder<'ctx> {
         &mut self,
         llvm_ctx: &'ctx Context,
         ctx: &mut LanguageContext<'ctx>,
-        generics: Vec<TypeId>,
+        generics: Vec<TypeID>,
     ) {
         let name = self.name.as_str();
         let static_struct = llvm_ctx.opaque_struct_type(format!("{name}__static").as_str());
-        let static_ptr = ctx.builder.build_alloca(static_struct, name).unwrap();
+        let static_ptr = ctx
+            .builder
+            .build_alloca(static_struct, format!("{name}__MTOBJ").as_str())
+            .unwrap();
         let mut members = HashMap::<String, Field<'ctx>>::new();
-        let mut internals = Vec::<BasicTypeEnum<'ctx>>::new();
+        let internals: Vec<BasicTypeEnum<'ctx>> =
+            vec![BasicTypeEnum::PointerType(ctx.types.ptr); self.static_values.len()];
+        static_struct.set_body(&internals, false);
         let mut i = 0;
         while !self.static_values.is_empty() {
             let val = self.static_values.pop().unwrap();
-            internals.push(BasicTypeEnum::PointerType(ctx.types.ptr));
             let field_ptr = ctx
                 .builder
-                .build_struct_gep(static_struct, static_ptr, i, "this_ptr")
+                .build_struct_gep(
+                    static_struct,
+                    static_ptr,
+                    i,
+                    format!("STATIC__{}_field", val.name).as_str(),
+                )
                 .unwrap();
             let value_ptr = val.val.get_ptr();
             ctx.builder.build_store(field_ptr, value_ptr).unwrap();
@@ -174,13 +183,12 @@ impl<'ctx> MetatypeBuilder<'ctx> {
 
             i += 1;
         }
-        static_struct.set_body(&internals, false);
 
         let out = Metatype::<'ctx> {
             base: self.base.clone(),
             class_name: name.to_string(),
             id: self.id.clone(),
-            generics: generics.iter().map(|g| ctx.get(g.clone())).collect(),
+            generics,
             members,
             static_ptr,
             static_struct,
