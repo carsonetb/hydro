@@ -16,11 +16,13 @@ use inkwell::{
 use crate::{
     callable::Function,
     int::Int,
-    scope::Scope,
     tuple::Tuple,
     types::{Metatype, TypeID},
-    value::ValueStatic,
+    value::{Field, ValueStatic},
 };
+
+pub type ScopeItem<'ctx> = HashMap<String, Field<'ctx>>;
+pub type Scope<'ctx> = Vec<ScopeItem<'ctx>>;
 
 pub struct LanguageContext<'ctx> {
     pub metatypes: HashMap<TypeID, Option<Metatype<'ctx>>>,
@@ -112,23 +114,68 @@ impl<'ctx> LanguageContext<'ctx> {
         self.types.int.const_int(value, false)
     }
 
-    pub fn ptr(&self) -> PointerType<'ctx> {
-        self.types.ptr
-    }
-
-    pub fn function(&self, args: u32) -> FunctionType<'ctx> {
-        self.ptr().fn_type(
-            &vec![BasicMetadataTypeEnum::PointerType(self.ptr()); args as usize],
-            false,
-        )
-    }
-
     pub fn get_struct_with_gen(&mut self, llvm_ctx: &'ctx Context, id: TypeID) -> StructType<'ctx> {
         self.get_with_gen(llvm_ctx, id).obj_struct
     }
 
     pub fn get_struct(&self, id: TypeID) -> StructType<'ctx> {
         self.get(id).obj_struct
+    }
+
+    pub fn get_storage(&self, id: TypeID) -> BasicTypeEnum<'ctx> {
+        self.get(id).storage_type
+    }
+
+    pub fn is_refcounted(&self, id: TypeID) -> bool {
+        self.get(id).is_refcounted
+    }
+
+    pub fn add_field(&mut self, name: String, field: Field<'ctx>) {
+        let current = self.current_scope_mut();
+        current.insert(name, field);
+    }
+
+    pub fn push_scope(&mut self) {
+        self.scope.push(ScopeItem::new());
+    }
+
+    pub fn pop_scope(&mut self) {
+        let mut scope = self.scope.pop().unwrap();
+        for (_, field) in scope.iter_mut() {
+            if !field.is_return {
+                field.release(self);
+            }
+        }
+    }
+
+    pub fn current_scope(&self) -> &ScopeItem<'ctx> {
+        self.scope
+            .last()
+            .expect("Cannot get current scope because no scopes have been pushed to the stack.")
+    }
+
+    pub fn current_scope_mut(&mut self) -> &mut ScopeItem<'ctx> {
+        self.scope
+            .last_mut()
+            .expect("Cannot get current scope because no scopes have been pushed to stack.")
+    }
+
+    pub fn get_field(&self, name: String) -> &Field<'ctx> {
+        for scope in self.scope.iter().rev() {
+            if scope.contains_key(&name.clone()) {
+                return scope.get(&name.clone()).unwrap();
+            }
+        }
+        panic!("No field named {name} in current scope.")
+    }
+
+    pub fn get_field_mut(&mut self, name: String) -> &mut Field<'ctx> {
+        for scope in self.scope.iter_mut().rev() {
+            if scope.contains_key(&name.clone()) {
+                return scope.get_mut(&name.clone()).unwrap();
+            }
+        }
+        panic!("No field named {name} in current scope.")
     }
 }
 

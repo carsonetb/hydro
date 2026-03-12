@@ -1,50 +1,75 @@
 use crate::{
     callable::Function,
     context::{LLVMTypes, LanguageContext},
-    types::{BasicType, Metatype, MetatypeBuilder, TypeID},
-    value::{Copyable, Field, Literal, Value, ValuePtr, ValueStatic},
+    types::{BasicBuiltin, MetatypeBuilder, TypeID},
+    value::{Copyable, Literal, Value, ValueEnum, ValueStatic},
 };
 use inkwell::{
     context::Context,
-    types::StructType,
-    values::{IntValue, PointerValue},
+    types::{AnyTypeEnum, BasicMetadataTypeEnum, BasicTypeEnum, StructType},
+    values::{BasicValueEnum, FunctionValue, IntValue},
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Int<'ctx> {
-    pub ptr: PointerValue<'ctx>,
+    pub val: IntValue<'ctx>,
 }
 
 impl<'ctx> Int<'ctx> {
-    pub fn new(ctx: &LanguageContext<'ctx>, value: IntValue<'ctx>, name: String) -> Self {
-        let ptr = ctx
-            .builder
-            .build_alloca(ctx.types.int_struct, &format!("{name}_ptr"))
-            .unwrap();
-        let value_ptr = ctx
-            .builder
-            .build_struct_gep(ctx.types.int_struct, ptr, 0, &format!("{name}_value_ptr"))
-            .unwrap();
-        ctx.builder.build_store(value_ptr, value).unwrap();
-        Self { ptr }
+    pub fn new(value: IntValue<'ctx>) -> Self {
+        Self { val: value }
     }
 
     pub fn init_body(types: &LLVMTypes<'ctx>, empty: StructType<'ctx>) {
         empty.set_body(&[types.int_enum()], false);
     }
+
+    fn build_binop(
+        llvm_ctx: &'ctx Context,
+        ctx: &LanguageContext<'ctx>,
+        op_builder: impl Fn(IntValue<'ctx>, IntValue<'ctx>) -> IntValue<'ctx>,
+        op_name: String,
+    ) -> FunctionValue<'ctx> {
+        let add_llvm_type = ctx
+            .types
+            .int
+            .fn_type(&[BasicMetadataTypeEnum::IntType(ctx.types.int); 2], false);
+        let add_llvm_fn =
+            ctx.module
+                .add_function(format!("Int.{op_name}").as_str(), add_llvm_type, None);
+        let entry = llvm_ctx.append_basic_block(add_llvm_fn, "entry");
+        let old_block = ctx.builder.get_insert_block().unwrap();
+        ctx.builder.position_at_end(entry);
+
+        let left = add_llvm_fn.get_nth_param(0).unwrap().into_int_value();
+        let right = add_llvm_fn.get_nth_param(1).unwrap().into_int_value();
+        left.set_name("lhs");
+        right.set_name("rhs");
+        let result = op_builder(left, right);
+        let as_int = Int::new(result);
+        ctx.builder.build_return(Some(&as_int.get_value())).unwrap();
+        ctx.builder.position_at_end(old_block);
+
+        add_llvm_fn
+    }
 }
 
 impl<'ctx> Value<'ctx> for Int<'ctx> {
-    fn member(&self, _ctx: &LanguageContext<'ctx>, _name: String) -> Option<&Field<'ctx>> {
-        Option::<&Field<'ctx>>::None
+    fn member(
+        &self,
+        _ctx: &LanguageContext<'ctx>,
+        _name: String,
+        _into: String,
+    ) -> ValueEnum<'ctx> {
+        panic!()
     }
 
     fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeID {
         TypeID::from_base("Int".to_string())
     }
 
-    fn get_ptr(&self) -> PointerValue<'ctx> {
-        self.ptr
+    fn get_value(&self) -> BasicValueEnum<'ctx> {
+        BasicValueEnum::IntValue(self.val)
     }
 }
 
@@ -57,39 +82,14 @@ impl<'ctx> ValueStatic<'ctx> for Int<'ctx> {
         assert_eq!(generics.len(), 0);
         let mut builder = MetatypeBuilder::new(
             ctx,
-            BasicType::Int,
+            BasicBuiltin::Int,
             TypeID::from_base("Int".to_string()),
             ctx.types.int_struct,
+            BasicTypeEnum::IntType(ctx.types.int),
+            false,
         );
 
-        let add_llvm_type = ctx.function(2);
-        let add_llvm_fn = ctx.module.add_function("Int__+", add_llvm_type, None);
-        let entry = llvm_ctx.append_basic_block(add_llvm_fn, "entry");
-        let old_block = ctx.builder.get_insert_block().unwrap();
-        ctx.builder.position_at_end(entry);
-
-        let params: Vec<Int<'ctx>> = add_llvm_fn
-            .get_params()
-            .iter()
-            .map(|p| {
-                Int::from_ptr(
-                    ctx,
-                    p.into_pointer_value(),
-                    TypeID::from_base("Int".to_string()),
-                    "arg".to_string(),
-                    "arg_storage".to_string(),
-                )
-            })
-            .collect();
-        let result = ctx
-            .builder
-            .build_int_add(params[0].raw(ctx), params[1].raw(ctx), "add_result")
-            .unwrap();
-        let as_int = Int::new(ctx, result, "result_ptr".to_string());
-        ctx.builder.build_return(Some(&as_int.get_ptr())).unwrap();
-        ctx.builder.position_at_end(old_block);
-
-        let add_type = TypeID::new(
+        let bin_type = TypeID::new(
             "Function".to_string(),
             vec![
                 TypeID::new(
@@ -99,45 +99,59 @@ impl<'ctx> ValueStatic<'ctx> for Int<'ctx> {
                 TypeID::from_base("Int".to_string()),
             ],
         );
-        let add_fn = Function::from_function(llvm_ctx, ctx, add_llvm_fn, add_type);
-        builder.add_static("+".to_string(), ValuePtr::PFunction(add_fn));
+        let add_llvm_fn = Int::build_binop(
+            llvm_ctx,
+            ctx,
+            |left, right| ctx.builder.build_int_add(left, right, "sum").unwrap(),
+            "+".to_string(),
+        );
+        let sub_llvm_fn = Int::build_binop(
+            llvm_ctx,
+            ctx,
+            |left, right| ctx.builder.build_int_sub(left, right, "diff").unwrap(),
+            "-".to_string(),
+        );
+        let mul_llvm_fn = Int::build_binop(
+            llvm_ctx,
+            ctx,
+            |left, right| ctx.builder.build_int_mul(left, right, "product").unwrap(),
+            "*".to_string(),
+        );
+        let div_llvm_fn = Int::build_binop(
+            llvm_ctx,
+            ctx,
+            |left, right| {
+                ctx.builder
+                    .build_int_signed_div(left, right, "quotient")
+                    .unwrap()
+            },
+            "/".to_string(),
+        );
+        let add_fn = Function::from_function(llvm_ctx, ctx, add_llvm_fn, bin_type.clone());
+        let sub_fn = Function::from_function(llvm_ctx, ctx, sub_llvm_fn, bin_type.clone());
+        let mul_fn = Function::from_function(llvm_ctx, ctx, mul_llvm_fn, bin_type.clone());
+        let div_fn = Function::from_function(llvm_ctx, ctx, div_llvm_fn, bin_type.clone());
+        builder.add_static("+".to_string(), ValueEnum::Function(add_fn));
+        builder.add_static("-".to_string(), ValueEnum::Function(sub_fn));
+        builder.add_static("*".to_string(), ValueEnum::Function(mul_fn));
+        builder.add_static("/".to_string(), ValueEnum::Function(div_fn));
 
         builder.build(llvm_ctx, ctx, generics);
     }
 }
 
 impl<'ctx> Copyable<'ctx> for Int<'ctx> {
-    fn from_ptr(
+    fn from_val(
         ctx: &LanguageContext<'ctx>,
-        ptr: PointerValue<'ctx>,
+        val: BasicValueEnum<'ctx>,
         _ptr_type: TypeID,
-        this_name: String,
-        other_name: String,
+        name: String,
     ) -> Self {
-        let value_ptr = ctx
-            .builder
-            .build_struct_gep(
-                ctx.types.int_struct,
-                ptr,
-                0,
-                &format!("{this_name}_raw_ptr"),
-            )
-            .unwrap();
-        let value = ctx
-            .builder
-            .build_load(ctx.types.int, value_ptr, &format!("{this_name}_raw"))
-            .unwrap()
-            .into_int_value();
-        Int::new(ctx, value, other_name)
+        Int::new(val.into_int_value())
     }
 
-    fn from(
-        ctx: &LanguageContext<'ctx>,
-        other: Self,
-        this_name: String,
-        other_name: String,
-    ) -> Self {
-        Int::from_ptr(ctx, other.ptr, other.get_type(ctx), this_name, other_name)
+    fn from(ctx: &LanguageContext<'ctx>, other: Self, name: String) -> Self {
+        Int::from_val(ctx, other.get_value(), other.get_type(ctx), name)
     }
 }
 
@@ -145,25 +159,12 @@ impl<'ctx> Literal<'ctx> for Int<'ctx> {
     type LiteralType = u32;
     type Repr = IntValue<'ctx>;
 
-    fn from_literal(ctx: &LanguageContext<'ctx>, value: Self::LiteralType, name: String) -> Self {
+    fn from_literal(ctx: &LanguageContext<'ctx>, value: Self::LiteralType, _name: String) -> Self {
         let ir_int = ctx.int(value as u64);
-        Int::new(ctx, ir_int, name)
+        Int::new(ir_int)
     }
 
-    fn raw(&self, ctx: &LanguageContext<'ctx>) -> Self::Repr {
-        let value_ptr = unsafe {
-            ctx.builder
-                .build_gep(
-                    ctx.types.int_struct,
-                    self.ptr,
-                    &[ctx.int(0), ctx.int(0)],
-                    "value_ptr",
-                )
-                .unwrap()
-        };
-        ctx.builder
-            .build_load(ctx.types.int, value_ptr, "int_raw")
-            .unwrap()
-            .into_int_value()
+    fn raw(&self, _ctx: &LanguageContext<'ctx>, _name: String) -> Self::Repr {
+        self.val
     }
 }

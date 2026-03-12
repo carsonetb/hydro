@@ -1,114 +1,83 @@
 use enum_dispatch::enum_dispatch;
 use inkwell::{
     context::Context,
-    values::{AnyValue, PointerValue},
+    types::AnyTypeEnum,
+    values::{AnyValue, BasicValueEnum, PointerValue},
 };
+use strum_macros::EnumTryAs;
 
 use crate::{
     callable::Function,
     context::LanguageContext,
     int::Int,
     tuple::Tuple,
-    types::{BasicType, Metatype, TypeID},
+    types::{BasicBuiltin, Metatype, TypeID},
     unit::Unit,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Field<'ctx> {
     name: String,
-    typ: TypeID,
     invalid: bool,
-    field_ptr: PointerValue<'ctx>,
+    pub is_return: bool,
+    pub value: ValueEnum<'ctx>,
 }
 
 impl<'ctx> Field<'ctx> {
-    pub fn new(field_ptr: PointerValue<'ctx>, name: String, typ: TypeID) -> Self {
+    pub fn new(value: ValueEnum<'ctx>, name: String) -> Self {
         Self {
             name,
-            typ,
             invalid: false,
-            field_ptr,
+            is_return: false,
+            value,
         }
     }
 
-    pub fn from_value(ctx: &LanguageContext<'ctx>, from: ValuePtr<'ctx>, name: String) -> Self {
-        let field_ptr = ctx
-            .builder
-            .build_alloca(ctx.types.ptr, &format!("FIELD__{name}"))
-            .unwrap();
-        ctx.builder.build_store(field_ptr, from.get_ptr()).unwrap();
-        Self::new(field_ptr, name, from.get_type(ctx))
-    }
-
-    pub fn store(&self, ctx: &LanguageContext<'ctx>, from: ValuePtr<'ctx>) {
-        ctx.builder
-            .build_store(self.field_ptr, from.get_ptr())
-            .unwrap();
-    }
-
-    pub fn load<T: Copyable<'ctx>>(
-        &self,
-        ctx: &LanguageContext<'ctx>,
-        into_name: String,
-    ) -> Option<T> {
+    pub fn reference(&self, ctx: &LanguageContext<'ctx>) {
         if self.invalid {
-            None
+            panic!("Cannot reference an invalidated field!")
         } else {
-            let name = self.name.clone();
-            let value_ptr = ctx
-                .builder
-                .build_load(ctx.types.ptr, self.field_ptr, &format!("{name}_ptr"))
-                .unwrap()
-                .into_pointer_value();
-            Some(T::from_ptr(
-                ctx,
-                value_ptr,
-                self.typ.clone(),
-                self.name.clone(),
-                into_name,
-            ))
+            // TODO: Retain current value.
         }
     }
 
-    pub fn exit_scope(&mut self) {
-        self.invalid = true
-        // TODO: When there are refcounted values, release it.
+    pub fn release(&self, ctx: &LanguageContext<'ctx>) {
+        assert_eq!(self.is_return, false);
+        // TODO: Release current value.
     }
 }
 
 #[enum_dispatch]
-pub enum ValuePtr<'ctx> {
-    PUnit(Unit),
-    PInt(Int<'ctx>),
-    PTuple(Tuple<'ctx>),
-    PFunction(Function<'ctx>),
+#[derive(Debug, EnumTryAs)]
+pub enum ValueEnum<'ctx> {
+    Unit(Unit),
+    Int(Int<'ctx>),
+    Tuple(Tuple<'ctx>),
+    Function(Function<'ctx>),
 }
 
-impl<'ctx> ValuePtr<'ctx> {
-    pub fn from_ptr(
+impl<'ctx> ValueEnum<'ctx> {
+    pub fn from_val(
         ctx: &LanguageContext<'ctx>,
-        ptr: PointerValue<'ctx>,
+        val: BasicValueEnum<'ctx>,
         typ: TypeID,
-        this_name: String,
-        other_name: String,
+        name: String,
     ) -> Self {
         match ctx.get(typ.clone()).base {
-            BasicType::Unit => panic!(),
-            BasicType::Type => panic!(),
-            BasicType::Int => Self::PInt(Int::from_ptr(ctx, ptr, typ, this_name, other_name)),
-            BasicType::Function => {
-                Self::PFunction(Function::from_ptr(ctx, ptr, typ, this_name, other_name))
-            }
-            BasicType::Tuple => Self::PTuple(Tuple::from_ptr(ctx, ptr, typ, this_name, other_name)),
+            BasicBuiltin::Unit => panic!(),
+            BasicBuiltin::Type => panic!(),
+            BasicBuiltin::Int => Self::Int(Int::from_val(ctx, val, typ, name)),
+            BasicBuiltin::Function => Self::Function(Function::from_val(ctx, val, typ, name)),
+            BasicBuiltin::Tuple => Self::Tuple(Tuple::from_val(ctx, val, typ, name)),
         }
     }
 }
 
-#[enum_dispatch(ValuePtr)]
+#[enum_dispatch(ValueEnum)]
 pub trait Value<'ctx> {
-    fn member(&self, ctx: &LanguageContext<'ctx>, name: String) -> Option<&Field<'ctx>>;
+    fn member(&self, ctx: &LanguageContext<'ctx>, name: String, into: String) -> ValueEnum<'ctx>;
     fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeID;
-    fn get_ptr(&self) -> PointerValue<'ctx>;
+    fn get_value(&self) -> BasicValueEnum<'ctx>;
 }
 
 pub trait ValueStatic<'ctx>: Value<'ctx> {
@@ -120,30 +89,19 @@ pub trait ValueStatic<'ctx>: Value<'ctx> {
 }
 
 pub trait Copyable<'ctx>: Value<'ctx> {
-    fn from_ptr(
+    fn from_val(
         ctx: &LanguageContext<'ctx>,
-        ptr: PointerValue<'ctx>,
-        ptr_type: TypeID,
-        this_name: String,
-        other_name: String,
+        val: BasicValueEnum<'ctx>,
+        val_type: TypeID,
+        name: String,
     ) -> Self;
 
-    fn from(
-        ctx: &LanguageContext<'ctx>,
-        other: Self,
-        this_name: String,
-        other_name: String,
-    ) -> Self;
-}
-
-pub trait RefCounted<'ctx> {
-    fn retain(&self, ctx: &LanguageContext<'ctx>);
-    fn release(&self, ctx: &LanguageContext<'ctx>);
+    fn from(ctx: &LanguageContext<'ctx>, other: Self, name: String) -> Self;
 }
 
 pub trait Literal<'ctx> {
     type LiteralType;
     type Repr: AnyValue<'ctx>;
     fn from_literal(ctx: &LanguageContext<'ctx>, literal: Self::LiteralType, name: String) -> Self;
-    fn raw(&self, ctx: &LanguageContext<'ctx>) -> Self::Repr;
+    fn raw(&self, ctx: &LanguageContext<'ctx>, name: String) -> Self::Repr;
 }

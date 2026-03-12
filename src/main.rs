@@ -5,7 +5,6 @@ mod context;
 mod errors;
 mod int;
 mod parser;
-mod scope;
 mod tuple;
 mod types;
 mod unit;

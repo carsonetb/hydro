@@ -1,24 +1,32 @@
-use inkwell::values::PointerValue;
+use inkwell::{
+    types::{AnyTypeEnum, BasicTypeEnum},
+    values::{BasicValueEnum, PointerValue},
+};
 
 use crate::{
     context::LanguageContext,
-    types::{BasicType, Metatype, MetatypeBuilder, TypeID},
-    value::{Field, Value, ValueStatic},
+    types::{BasicBuiltin, Metatype, MetatypeBuilder, TypeID},
+    value::{Field, Value, ValueEnum, ValueStatic},
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Unit {}
 
 impl<'ctx> Value<'ctx> for Unit {
-    fn member(&self, _ctx: &LanguageContext<'ctx>, _name: String) -> Option<&Field<'ctx>> {
+    fn member(
+        &self,
+        _ctx: &LanguageContext<'ctx>,
+        _name: String,
+        _into: String,
+    ) -> ValueEnum<'ctx> {
         panic!()
     }
 
-    fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeID {
+    fn get_type(&self, _ctx: &LanguageContext<'ctx>) -> TypeID {
         TypeID::from_base("Unit".to_string())
     }
 
-    fn get_ptr(&self) -> PointerValue<'ctx> {
+    fn get_value(&self) -> BasicValueEnum<'ctx> {
         panic!()
     }
 }
@@ -34,9 +42,11 @@ impl<'ctx> ValueStatic<'ctx> for Unit {
         obj_struct.set_body(&[], false);
         let mut builder = MetatypeBuilder::new(
             ctx,
-            BasicType::Unit,
+            BasicBuiltin::Unit,
             TypeID::from_base("Unit".to_string()),
             obj_struct,
+            BasicTypeEnum::PointerType(ctx.types.ptr),
+            false,
         );
         builder.build(llvm_ctx, ctx, generics);
     }
