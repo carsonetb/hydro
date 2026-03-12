@@ -1,0 +1,6 @@
+[submodule "src/clib/bdwgc"]
+	path = src/clib/bdwgc
+	url = https://github.com/bdwgc/bdwgc
+[submodule "src/clib/hashmap.c"]
+	path = src/clib/hashmap.c
+	url = https://github.com/tidwall/hashmap.c
