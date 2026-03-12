@@ -79,7 +79,7 @@ pub fn primary<'src>()
     atom().map(|atom| Box::new(Primary::Atom(atom))).spanned()
 }
 
-pub fn expr<'src>() -> impl Parser<'src, &'src str, Expr, extra::Err<Rich<'src, char>>> {
+pub fn expr<'src>() -> impl Parser<'src, &'src str, Spanned<Expr>, extra::Err<Rich<'src, char>>> {
     macro_rules! op {
         ($c:expr) => {
             just($c).padded().spanned()
@@ -91,7 +91,14 @@ pub fn expr<'src>() -> impl Parser<'src, &'src str, Expr, extra::Err<Rich<'src, 
             $prev_rule
                 .clone()
                 .foldl($ops.then($prev_rule).repeated(), |lhs, (op, rhs)| {
-                    Expr::Binary(Box::new(lhs), op.to_string(), Box::new(rhs))
+                    lhs.span
+                        .union(op.span)
+                        .union(rhs.span)
+                        .make_wrapped(Expr::Binary(
+                            Box::new(lhs.inner),
+                            op.span.make_wrapped(op.to_string()),
+                            Box::new(rhs.inner),
+                        ))
                 })
                 .boxed()
         };
@@ -106,22 +113,15 @@ pub fn expr<'src>() -> impl Parser<'src, &'src str, Expr, extra::Err<Rich<'src, 
         .spanned()
         .boxed();
 
-    // TODO: Span<Expr> for rhs and lhs.
-    let factor = unary
-        .clone()
-        .foldl(
-            choice((op!("*"), op!("/"))).then(unary).repeated(),
-            |lhs, (op, rhs)| Expr::Binary(Box::new(lhs.inner), op.to_string(), Box::new(rhs.inner)),
-        )
-        .spanned()
-        .boxed();
+    // TODO: Spanned<Expr> for rhs and lhs.
+    let factor = binary_op!(unary, choice((op!("*"), op!("/"))));
     let sum = binary_op!(factor, choice((op!("+"), op!("-"))));
 
     sum
 }
 
 pub fn var_decl<'src>() -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'src, char>>> {
-    let ident = text::ascii::ident().padded();
+    let ident = text::ascii::ident().padded().spanned();
     text::ascii::keyword("var")
         .padded()
         .ignore_then(ident)
@@ -131,22 +131,22 @@ pub fn var_decl<'src>() -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'s
         .then(expr())
         .then_ignore(just(";"))
         .map(|((name, typ), value)| Stmt::VarDecl {
-            name: name.to_string(),
-            typ: typ.to_string(),
-            value: Box::new(value),
+            name: name.span.make_wrapped(name.to_string()),
+            typ: typ.span.make_wrapped(typ.to_string()),
+            value: value.span.make_wrapped(Box::new(value.inner)),
         })
         .boxed()
 }
 
 pub fn stmt<'src>() -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'src, char>>> {
-    let ident = text::ascii::ident().padded();
+    let ident = text::ascii::ident().padded().spanned();
     let set = ident
         .then_ignore(just("="))
         .then(expr())
         .then_ignore(just(";"))
         .map(|(name, value)| Stmt::VarSet {
-            name: name.to_string(),
-            value: Box::new(value),
+            name: name.span.make_wrapped(name.to_string()),
+            value: value.span.make_wrapped(Box::new(value.inner)),
         })
         .boxed();
 
@@ -162,7 +162,7 @@ pub fn stmt<'src>() -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'src, 
         .or(set)
         .or(expr()
             .then_ignore(just(";"))
-            .map(|expression| Stmt::Expr(Box::new(expression))))
+            .map(|expression| Stmt::Expr(expression.span.make_wrapped(Box::new(expression.inner)))))
         .recover_with(recovery)
         .boxed()
 }

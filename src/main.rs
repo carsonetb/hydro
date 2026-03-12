@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 mod callable;
 mod codegen;
 mod compile;
