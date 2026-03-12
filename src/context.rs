@@ -15,6 +15,7 @@ use inkwell::{
 
 use crate::{
     callable::Function,
+    codegen::CompileError,
     int::Int,
     tuple::Tuple,
     types::{Metatype, TypeID},
@@ -31,6 +32,7 @@ pub struct LanguageContext<'ctx> {
     pub builder: Builder<'ctx>,
     pub machine: TargetMachine,
     pub scope: Scope<'ctx>,
+    pub errors: Vec<CompileError>,
     generic_gens: HashMap<String, fn(&'ctx Context, &mut LanguageContext<'ctx>, Vec<TypeID>)>,
 }
 
@@ -59,11 +61,16 @@ impl<'ctx> LanguageContext<'ctx> {
             module,
             machine,
             scope: Scope::new(),
+            errors: Vec::<CompileError>::new(),
             generic_gens: HashMap::<
                 String,
                 fn(&'ctx Context, &mut LanguageContext<'ctx>, Vec<TypeID>),
             >::new(),
         }
+    }
+
+    pub fn error(&mut self, err: CompileError) {
+        self.errors.push(err);
     }
 
     pub fn init_metatypes(&mut self, context: &'ctx Context) {
