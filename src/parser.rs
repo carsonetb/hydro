@@ -5,7 +5,7 @@ use std::{
 };
 
 use ariadne::{Color, Label, Report, ReportKind, Source};
-use chumsky::prelude::*;
+use chumsky::{prelude::*, span::WrappingSpan};
 
 #[derive(Debug)]
 pub enum ErrorKind {
@@ -22,32 +22,32 @@ pub struct Program {
 pub enum Stmt {
     Error(ErrorKind),
     VarDecl {
-        name: String,
-        typ: String,
-        value: Box<Expr>,
+        name: Spanned<String>,
+        typ: Spanned<String>,
+        value: Spanned<Box<Expr>>,
     },
     VarSet {
-        name: String,
-        value: Box<Expr>,
+        name: Spanned<String>,
+        value: Spanned<Box<Expr>>,
     },
-    Expr(Box<Expr>),
+    Expr(Spanned<Box<Expr>>),
 }
 
 #[derive(Debug)]
 pub enum Expr {
-    Unary(String, Box<Expr>),
-    Binary(Box<Expr>, String, Box<Expr>),
-    Primary(Box<Primary>),
+    Unary(Spanned<String>, Box<Expr>),
+    Binary(Box<Expr>, Spanned<String>, Box<Expr>),
+    Primary(Spanned<Box<Primary>>),
 }
 
 #[derive(Debug)]
 pub enum Primary {
-    Atom(Box<Atom>),
+    Atom(Spanned<Box<Atom>>),
 }
 
 #[derive(Debug)]
 pub enum Atom {
-    Literal(ParseLiteral),
+    Literal(Spanned<ParseLiteral>),
 }
 
 #[derive(Debug)]
@@ -56,25 +56,33 @@ pub enum ParseLiteral {
     Int(u32),
 }
 
-pub fn literal<'src>() -> impl Parser<'src, &'src str, ParseLiteral, extra::Err<Rich<'src, char>>> {
-    text::int(10).padded().from_str().map(|r| match r {
-        Ok(int) => ParseLiteral::Int(int),
-        Err(_) => ParseLiteral::Error(ErrorKind::Unknown),
-    })
+pub fn literal<'src>()
+-> impl Parser<'src, &'src str, Spanned<ParseLiteral>, extra::Err<Rich<'src, char>>> {
+    text::int(10)
+        .padded()
+        .from_str()
+        .map(|r| match r {
+            Ok(int) => ParseLiteral::Int(int),
+            Err(_) => ParseLiteral::Error(ErrorKind::Unknown),
+        })
+        .spanned()
+        .boxed()
 }
 
-pub fn atom<'src>() -> impl Parser<'src, &'src str, Atom, extra::Err<Rich<'src, char>>> {
-    literal().map(Atom::Literal)
+pub fn atom<'src>() -> impl Parser<'src, &'src str, Spanned<Box<Atom>>, extra::Err<Rich<'src, char>>>
+{
+    literal().map(|l| Box::new(Atom::Literal(l))).spanned()
 }
 
-pub fn primary<'src>() -> impl Parser<'src, &'src str, Primary, extra::Err<Rich<'src, char>>> {
-    atom().map(|atom| Primary::Atom(Box::new(atom)))
+pub fn primary<'src>()
+-> impl Parser<'src, &'src str, Spanned<Box<Primary>>, extra::Err<Rich<'src, char>>> {
+    atom().map(|atom| Box::new(Primary::Atom(atom))).spanned()
 }
 
 pub fn expr<'src>() -> impl Parser<'src, &'src str, Expr, extra::Err<Rich<'src, char>>> {
     macro_rules! op {
         ($c:expr) => {
-            just($c).padded()
+            just($c).padded().spanned()
         };
     }
 
@@ -92,12 +100,21 @@ pub fn expr<'src>() -> impl Parser<'src, &'src str, Expr, extra::Err<Rich<'src, 
     let unary = op!("-")
         .repeated()
         .foldr(
-            primary().map(|primary| Expr::Primary(Box::new(primary))),
-            |op, rhs| Expr::Unary(op.to_string(), Box::new(rhs)),
+            primary().map(|primary| Expr::Primary(primary)),
+            |op, rhs| Expr::Unary(op.span.make_wrapped(op.inner.to_string()), Box::new(rhs)),
         )
+        .spanned()
         .boxed();
 
-    let factor = binary_op!(unary, choice((op!("*"), op!("/"))));
+    // TODO: Span<Expr> for rhs and lhs.
+    let factor = unary
+        .clone()
+        .foldl(
+            choice((op!("*"), op!("/"))).then(unary).repeated(),
+            |lhs, (op, rhs)| Expr::Binary(Box::new(lhs.inner), op.to_string(), Box::new(rhs.inner)),
+        )
+        .spanned()
+        .boxed();
     let sum = binary_op!(factor, choice((op!("+"), op!("-"))));
 
     sum

@@ -21,7 +21,7 @@ use crate::{codegen::do_codegen, compile::execute_jit, context::LanguageContext,
 
 fn main() -> Result<(), Box<dyn Error>> {
     let program =
-        parse(Path::new("examples/test.hydro").to_path_buf()).expect("Failed to parse program.");
+        parse(Path::new("examples/test.hy").to_path_buf()).expect("Failed to parse program.");
 
     Target::initialize_native(&InitializationConfig::default())
         .expect("Failed to initialize native machine target!");
