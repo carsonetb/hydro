@@ -4,7 +4,6 @@ mod callable;
 mod codegen;
 mod compile;
 mod context;
-mod errors;
 mod int;
 mod parser;
 mod tuple;
@@ -22,8 +21,8 @@ use inkwell::{
 use crate::{codegen::do_codegen, compile::execute_jit, context::LanguageContext, parser::parse};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let program =
-        parse(Path::new("examples/test.hy").to_path_buf()).expect("Failed to parse program.");
+    let path = Path::new("examples/test.hy").to_path_buf();
+    let program = parse(path.clone()).expect("Failed to parse program.");
 
     Target::initialize_native(&InitializationConfig::default())
         .expect("Failed to initialize native machine target!");
@@ -38,7 +37,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     ctx.init_metatypes(&llvm_ctx);
 
-    do_codegen(&mut ctx, program);
+    do_codegen(&mut ctx, path, program);
 
     ctx.builder.build_return(Some(&ctx.int(0))).unwrap();
 

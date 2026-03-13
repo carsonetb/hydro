@@ -7,6 +7,8 @@ use std::{
 use ariadne::{Color, Label, Report, ReportKind, Source};
 use chumsky::{prelude::*, span::WrappingSpan};
 
+use crate::types::TypeID;
+
 #[derive(Debug)]
 pub enum ErrorKind {
     UnexpectedText(String),
@@ -23,7 +25,7 @@ pub enum Stmt {
     Error(ErrorKind),
     VarDecl {
         name: Spanned<String>,
-        typ: Spanned<String>,
+        typ: Option<Spanned<ParserType>>,
         value: Spanned<Box<Expr>>,
     },
     VarSet {
@@ -36,7 +38,7 @@ pub enum Stmt {
 #[derive(Debug)]
 pub enum Expr {
     Unary(Spanned<String>, Box<Expr>),
-    Binary(Box<Expr>, Spanned<String>, Box<Expr>),
+    Binary(Spanned<Box<Expr>>, Spanned<String>, Spanned<Box<Expr>>),
     Primary(Spanned<Box<Primary>>),
 }
 
@@ -54,6 +56,55 @@ pub enum Atom {
 pub enum ParseLiteral {
     Error(ErrorKind),
     Int(u32),
+}
+
+#[derive(Debug)]
+pub struct ParserType {
+    pub base: Spanned<String>,
+    pub generics: Vec<Spanned<ParserType>>,
+}
+
+impl ParserType {
+    pub fn to_typeid(&self) -> TypeID {
+        TypeID::new(
+            self.base.inner.clone(),
+            self.generics.iter().map(|g| g.inner.to_typeid()).collect(),
+        )
+    }
+
+    pub fn new(base: Spanned<String>, generics: Vec<Spanned<ParserType>>) -> Self {
+        Self { base, generics }
+    }
+
+    pub fn from_base(base: Spanned<String>) -> Self {
+        Self {
+            base,
+            generics: Vec::<Spanned<ParserType>>::new(),
+        }
+    }
+}
+
+pub fn type_parser<'src>()
+-> impl Parser<'src, &'src str, Spanned<ParserType>, extra::Err<Rich<'src, char>>> {
+    recursive(|typ| {
+        let ident = text::ascii::ident()
+            .spanned()
+            .map(|name: Spanned<&str>| name.span.make_wrapped(name.inner.to_string()));
+
+        let args = typ
+            .separated_by(just(','))
+            .collect::<Vec<_>>()
+            .delimited_by(just('<'), just('>'));
+
+        ident
+            .then(args.or_not())
+            .map(|(base, generics)| match generics {
+                Some(generics) => ParserType::new(base, generics),
+                None => ParserType::from_base(base),
+            })
+            .spanned()
+            .boxed()
+    })
 }
 
 pub fn literal<'src>()
@@ -95,9 +146,9 @@ pub fn expr<'src>() -> impl Parser<'src, &'src str, Spanned<Expr>, extra::Err<Ri
                         .union(op.span)
                         .union(rhs.span)
                         .make_wrapped(Expr::Binary(
-                            Box::new(lhs.inner),
+                            lhs.span.make_wrapped(Box::new(lhs.inner)),
                             op.span.make_wrapped(op.to_string()),
-                            Box::new(rhs.inner),
+                            rhs.span.make_wrapped(Box::new(rhs.inner)),
                         ))
                 })
                 .boxed()
@@ -113,7 +164,6 @@ pub fn expr<'src>() -> impl Parser<'src, &'src str, Spanned<Expr>, extra::Err<Ri
         .spanned()
         .boxed();
 
-    // TODO: Spanned<Expr> for rhs and lhs.
     let factor = binary_op!(unary, choice((op!("*"), op!("/"))));
     let sum = binary_op!(factor, choice((op!("+"), op!("-"))));
 
@@ -121,18 +171,17 @@ pub fn expr<'src>() -> impl Parser<'src, &'src str, Spanned<Expr>, extra::Err<Ri
 }
 
 pub fn var_decl<'src>() -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'src, char>>> {
-    let ident = text::ascii::ident().padded().spanned();
+    let ident = text::ascii::ident().spanned();
     text::ascii::keyword("var")
         .padded()
         .ignore_then(ident)
-        .then_ignore(just(":"))
-        .then(ident)
-        .then_ignore(just("="))
+        .then(just(':').padded().ignore_then(type_parser()).or_not())
+        .then_ignore(just("=").padded())
         .then(expr())
         .then_ignore(just(";"))
         .map(|((name, typ), value)| Stmt::VarDecl {
             name: name.span.make_wrapped(name.to_string()),
-            typ: typ.span.make_wrapped(typ.to_string()),
+            typ: typ,
             value: value.span.make_wrapped(Box::new(value.inner)),
         })
         .boxed()

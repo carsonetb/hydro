@@ -1,3 +1,10 @@
+use std::{
+    fs::File,
+    io::Read,
+    path::{Path, PathBuf},
+};
+
+use ariadne::{Color, Label, Report, ReportKind, Source};
 use chumsky::span::SimpleSpan;
 
 use crate::{
@@ -9,14 +16,27 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub struct CompileError {
-    span: SimpleSpan,
-    reason: String,
-}
+pub struct CompileError(Vec<(SimpleSpan, String)>);
 
 impl CompileError {
     fn new(span: SimpleSpan, reason: String) -> Self {
-        Self { span, reason }
+        Self(vec![(span, reason)])
+    }
+
+    fn with_notes(msg_span: SimpleSpan, msg: String, note_span: SimpleSpan, note: String) -> Self {
+        Self(vec![(msg_span, msg), (note_span, note)])
+    }
+
+    fn message_span(&self) -> SimpleSpan {
+        self.0[0].0
+    }
+
+    fn message(&self) -> String {
+        self.0[0].1.clone()
+    }
+
+    fn notes(&self) -> Vec<(SimpleSpan, String)> {
+        self.0[1..].to_vec()
     }
 }
 
@@ -74,20 +94,32 @@ pub fn gen_stmt(ctx: &mut LanguageContext, stmt: &Stmt) -> Result<(), CompileErr
     match stmt {
         Stmt::Error(_) => panic!(),
         Stmt::VarDecl { name, typ, value } => {
-            let value = gen_expr(ctx, value.as_ref());
-            if value.is_err() {
-                return Err(value.unwrap_err());
+            let eval = gen_expr(ctx, value.as_ref());
+            if eval.is_err() {
+                return Err(eval.unwrap_err());
             }
-            let value = value.unwrap();
-            if value.get_type(ctx).name() != typ.inner.clone() {
-                return Err(CompileError::new(span, reason));
+            let eval = eval.unwrap();
+            let eval_type = eval.get_type(ctx).name();
+            if typ.is_some() && eval_type != typ.as_ref().unwrap().inner.to_typeid().name() {
+                return Err(CompileError::with_notes(
+                    value.span,
+                    format!(
+                        "Expression evaluates to type `{}`, which is not expected.",
+                        eval_type
+                    ),
+                    typ.as_ref().unwrap().span,
+                    format!(
+                        "An expected type was specified here. Compilation will continue as if this was `{}`",
+                        eval_type
+                    ),
+                ));
             }
-            let field = Field::new(value, name.inner.clone());
+            let field = Field::new(eval, name.inner.clone());
             ctx.add_field(name.inner.clone(), field);
             Ok(())
         }
         Stmt::VarSet { name, value } => {
-            let expr = gen_expr(ctx, value.as_ref());
+            let expr = gen_expr(ctx, value.as_ref())?;
             let field = ctx.get_field(name.inner.clone());
             field.release(ctx);
             ctx.get_field_mut(name.inner.clone()).value = expr;
@@ -100,12 +132,51 @@ pub fn gen_stmt(ctx: &mut LanguageContext, stmt: &Stmt) -> Result<(), CompileErr
     }
 }
 
-pub fn do_codegen(ctx: &mut LanguageContext, program: Program) {
+pub fn do_codegen(ctx: &mut LanguageContext, path: PathBuf, program: Program) {
+    let filename = path
+        .clone()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let mut file = File::open(path).expect("Cannot read path!");
+    let mut src = "".to_string();
+    file.read_to_string(&mut src).unwrap();
+
     ctx.push_scope();
 
     for stmt in program.stmts.iter() {
-        gen_stmt(ctx, stmt);
+        match gen_stmt(ctx, stmt) {
+            Ok(_) => continue,
+            Err(err) => ctx.error(err),
+        }
     }
 
     ctx.pop_scope();
+
+    for err in ctx.errors.clone() {
+        let mut report = Report::build(
+            ReportKind::Error,
+            (filename.clone(), err.message_span().into_range()),
+        )
+        .with_message("Compiler Error")
+        .with_label(
+            Label::new((filename.clone(), err.message_span().into_range()))
+                .with_message(err.message().to_string())
+                .with_color(Color::Red),
+        );
+
+        for (span, note) in err.notes() {
+            report = report.with_label(
+                Label::new((filename.clone(), span.into_range()))
+                    .with_message(note)
+                    .with_color(Color::Blue),
+            )
+        }
+
+        report
+            .finish()
+            .eprint((filename.clone(), Source::from(&src)))
+            .unwrap();
+    }
 }
