@@ -78,8 +78,7 @@ pub fn gen_expr<'ctx>(
                     format!("Cannot use operator '{}' on different types!", op.inner),
                 ));
             }
-            let op_fn = ctx
-                .get(left_type.clone())
+            let op_fn = left
                 .member(ctx, op.inner.clone(), op.inner.clone())
                 .try_as_function()
                 .unwrap();

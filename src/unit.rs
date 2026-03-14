@@ -38,13 +38,11 @@ impl<'ctx> ValueStatic<'ctx> for Unit {
         generics: Vec<TypeID>,
     ) {
         assert_eq!(generics.len(), 0);
-        let obj_struct = llvm_ctx.opaque_struct_type("Unit");
-        obj_struct.set_body(&[], false);
         let mut builder = MetatypeBuilder::new(
             ctx,
             BasicBuiltin::Unit,
             TypeID::from_base("Unit".to_string()),
-            obj_struct,
+            None,
             BasicTypeEnum::PointerType(ctx.types.ptr),
             false,
         );

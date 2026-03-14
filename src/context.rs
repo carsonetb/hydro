@@ -122,15 +122,23 @@ impl<'ctx> LanguageContext<'ctx> {
     }
 
     pub fn get_struct_with_gen(&mut self, llvm_ctx: &'ctx Context, id: TypeID) -> StructType<'ctx> {
-        self.get_with_gen(llvm_ctx, id).obj_struct
+        self.get_with_gen(llvm_ctx, id).obj_struct.unwrap()
     }
 
     pub fn get_struct(&self, id: TypeID) -> StructType<'ctx> {
-        self.get(id).obj_struct
+        self.get(id).obj_struct.unwrap()
     }
 
     pub fn get_storage(&self, id: TypeID) -> BasicTypeEnum<'ctx> {
         self.get(id).storage_type
+    }
+
+    pub fn get_storage_with_gen(
+        &mut self,
+        llvm_ctx: &'ctx Context,
+        id: TypeID,
+    ) -> BasicTypeEnum<'ctx> {
+        self.get_with_gen(llvm_ctx, id).storage_type
     }
 
     pub fn is_refcounted(&self, id: TypeID) -> bool {
@@ -192,7 +200,6 @@ pub struct LLVMTypes<'ctx> {
     pub char: IntType<'ctx>,
     pub short: IntType<'ctx>,
     pub int: IntType<'ctx>,
-    pub int_struct: StructType<'ctx>,
     pub long: IntType<'ctx>,
     pub big: IntType<'ctx>,
     pub float: FloatType<'ctx>,
@@ -203,13 +210,10 @@ pub struct LLVMTypes<'ctx> {
 
 impl<'ctx> LLVMTypes<'ctx> {
     pub fn new(context: &'ctx Context) -> Self {
-        let int_struct = context.opaque_struct_type("Int");
-
         let type_struct = context.opaque_struct_type("Type");
 
         let out = Self {
             type_struct,
-            int_struct,
             bool: context.bool_type(),
             char: context.i8_type(),
             short: context.i16_type(),
@@ -221,8 +225,6 @@ impl<'ctx> LLVMTypes<'ctx> {
             ptr: context.ptr_type(AddressSpace::from(0u16)),
             void: context.void_type(),
         };
-
-        Int::init_body(&out, int_struct);
 
         out
     }

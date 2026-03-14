@@ -37,38 +37,17 @@ pub struct Function<'ctx> {
 }
 
 impl<'ctx> Function<'ctx> {
-    fn new_with_struct(
+    pub fn new(
         ctx: &LanguageContext<'ctx>,
-        type_struct: StructType<'ctx>,
         fn_ptr: PointerValue<'ctx>,
         typ: TypeID,
         name: String,
     ) -> Self {
-        let ptr = ctx
-            .builder
-            .build_alloca(type_struct, &format!("FN__{name}_ptr"))
-            .unwrap();
-        let value_ptr = ctx
-            .builder
-            .build_struct_gep(type_struct, ptr, 0, &format!("FN__{name}_raw_ptr"))
-            .unwrap();
-        ctx.builder.build_store(value_ptr, fn_ptr).unwrap();
         Self {
             name,
             metatype: typ,
-            ptr,
+            ptr: fn_ptr,
         }
-    }
-
-    pub fn new(
-        llvm_ctx: &'ctx Context,
-        ctx: &mut LanguageContext<'ctx>,
-        fn_ptr: PointerValue<'ctx>,
-        typ: TypeID,
-        name: String,
-    ) -> Self {
-        let struct_type = ctx.get_struct_with_gen(llvm_ctx, typ.clone());
-        Self::new_with_struct(ctx, struct_type, fn_ptr, typ, name)
     }
 
     pub fn from_function(
@@ -78,7 +57,6 @@ impl<'ctx> Function<'ctx> {
         typ: TypeID,
     ) -> Self {
         Self::new(
-            llvm_ctx,
             ctx,
             fn_val.as_global_value().as_pointer_value(),
             typ,
@@ -110,28 +88,9 @@ impl<'ctx> Callable<'ctx> for Function<'ctx> {
             .map(|a| BasicMetadataTypeEnum::try_from(ctx.get_storage(a.clone())).unwrap())
             .collect();
         let fn_type = ctx.get_storage(self.returns()).fn_type(&params, false);
-        let fn_ptr_ptr = ctx
-            .builder
-            .build_struct_gep(
-                ctx.get_struct(self.metatype.clone()),
-                self.ptr,
-                0,
-                format!("{}_ptr_ptr", self.name).as_str(),
-            )
-            .unwrap();
-        let fn_ptr = ctx
-            .builder
-            .build_load(
-                ctx.types.ptr,
-                fn_ptr_ptr,
-                format!("{}_ptr", self.name).as_str(),
-            )
-            .unwrap()
-            .as_basic_value_enum()
-            .into_pointer_value();
         let result = ctx
             .builder
-            .build_indirect_call(fn_type, fn_ptr, &arg_ptrs, &into_name)
+            .build_indirect_call(fn_type, self.ptr, &arg_ptrs, &into_name)
             .unwrap()
             .try_as_basic_value();
 
@@ -186,14 +145,12 @@ impl<'ctx> ValueStatic<'ctx> for Function<'ctx> {
         assert_eq!(generics[0].base, "Tuple");
 
         let type_name = TypeID::new("Function".to_string(), generics.clone());
-        let obj_struct = llvm_ctx.opaque_struct_type(&type_name.name().as_str());
-        obj_struct.set_body(&[BasicTypeEnum::PointerType(ctx.types.ptr)], false);
 
         let mut builder = MetatypeBuilder::new(
             ctx,
             BasicBuiltin::Function,
             TypeID::new("Function".to_string(), generics.clone()),
-            obj_struct,
+            None,
             BasicTypeEnum::PointerType(ctx.types.ptr),
             false,
         );
@@ -208,28 +165,7 @@ impl<'ctx> Copyable<'ctx> for Function<'ctx> {
         ptr_type: TypeID,
         name: String,
     ) -> Self {
-        let fn_struct = ctx.get_struct(ptr_type.clone());
-        let fn_ptr_ptr = ctx
-            .builder
-            .build_struct_gep(
-                fn_struct,
-                ptr.into_pointer_value(),
-                0,
-                &format!("{name}_FNRAW_ptr"),
-            )
-            .unwrap();
-        let fn_ptr = ctx
-            .builder
-            .build_load(ctx.types.ptr, fn_ptr_ptr, &format!("{name}_FNRAW"))
-            .unwrap()
-            .into_pointer_value();
-        Self::new_with_struct(
-            ctx,
-            ctx.get_struct(ptr_type.clone()),
-            fn_ptr,
-            ptr_type,
-            name,
-        )
+        Self::new(ctx, ptr.into_pointer_value(), ptr_type, name)
     }
 
     fn from(ctx: &LanguageContext<'ctx>, other: Self, name: String) -> Self {

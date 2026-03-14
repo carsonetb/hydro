@@ -2,8 +2,8 @@ use std::{collections::HashMap, fmt::Display};
 
 use inkwell::{
     context::Context,
-    types::{AnyTypeEnum, BasicTypeEnum, StructType},
-    values::{BasicValueEnum, PointerValue},
+    types::{AnyTypeEnum, BasicTypeEnum, FunctionType, StructType},
+    values::{BasicValueEnum, FunctionValue, PointerValue},
 };
 
 use crate::{
@@ -71,9 +71,10 @@ pub struct Metatype<'ctx> {
     members: HashMap<String, Member>,
     static_ptr: PointerValue<'ctx>,
     pub static_struct: StructType<'ctx>,
-    pub obj_struct: StructType<'ctx>,
+    pub obj_struct: Option<StructType<'ctx>>,
     pub storage_type: BasicTypeEnum<'ctx>,
     pub is_refcounted: bool,
+    pub initializer: Option<FunctionValue<'ctx>>,
 }
 
 impl<'ctx> Metatype<'ctx> {}
@@ -124,7 +125,7 @@ impl<'ctx> ValueStatic<'ctx> for Metatype<'ctx> {
             ctx,
             BasicBuiltin::Type,
             TypeID::from_base("Type".to_string()),
-            ctx.types.type_struct,
+            Some(ctx.types.type_struct),
             BasicTypeEnum::PointerType(ctx.types.ptr),
             false,
         );
@@ -147,10 +148,11 @@ pub struct MetatypeBuilder<'ctx> {
     id: TypeID,
     base: BasicBuiltin,
     name: String,
-    obj_struct: StructType<'ctx>,
+    obj_struct: Option<StructType<'ctx>>,
     storage_type: BasicTypeEnum<'ctx>,
     static_values: Vec<BuilderStaticRepr<'ctx>>,
     is_refcounted: bool,
+    pub initializer: Option<FunctionValue<'ctx>>,
 }
 
 impl<'ctx> MetatypeBuilder<'ctx> {
@@ -158,7 +160,7 @@ impl<'ctx> MetatypeBuilder<'ctx> {
         ctx: &mut LanguageContext<'ctx>,
         base: BasicBuiltin,
         id: TypeID,
-        obj_struct: StructType<'ctx>,
+        obj_struct: Option<StructType<'ctx>>,
         storage_type: BasicTypeEnum<'ctx>,
         is_refcounted: bool,
     ) -> Self {
@@ -171,6 +173,7 @@ impl<'ctx> MetatypeBuilder<'ctx> {
             storage_type,
             static_values: Vec::<BuilderStaticRepr<'ctx>>::new(),
             is_refcounted,
+            initializer: None,
         }
     }
 
@@ -189,29 +192,18 @@ impl<'ctx> MetatypeBuilder<'ctx> {
         let static_ptr =
             ctx.module
                 .add_global(static_struct, None, format!("Type__{name}").as_str());
-        static_ptr.set_initializer(&static_struct.const_zero());
-        let static_ptr = static_ptr.as_pointer_value();
         let mut members = HashMap::<String, Member>::new();
         let internals: Vec<BasicTypeEnum<'ctx>> = self
             .static_values
             .iter()
-            .map(|v| ctx.get_storage(v.val.get_type(ctx)))
+            .map(|v| ctx.get_storage_with_gen(llvm_ctx, v.val.get_type(ctx)))
             .collect();
         static_struct.set_body(&internals, false);
         let mut i = 0;
+        let mut static_values = Vec::<BasicValueEnum<'ctx>>::new();
         while !self.static_values.is_empty() {
             let val = self.static_values.pop().unwrap();
-            let field_ptr = ctx
-                .builder
-                .build_struct_gep(
-                    static_struct,
-                    static_ptr,
-                    i,
-                    format!("STATIC__{}_field", val.name).as_str(),
-                )
-                .unwrap();
-            let value_ptr = val.val.get_value();
-            ctx.builder.build_store(field_ptr, value_ptr).unwrap();
+            static_values.push(val.val.get_value());
 
             members.insert(
                 val.name.clone(),
@@ -223,6 +215,8 @@ impl<'ctx> MetatypeBuilder<'ctx> {
 
             i += 1;
         }
+        static_ptr.set_initializer(&static_struct.const_named_struct(&static_values));
+        let static_ptr = static_ptr.as_pointer_value();
 
         let out = Metatype::<'ctx> {
             base: self.base.clone(),
@@ -235,6 +229,7 @@ impl<'ctx> MetatypeBuilder<'ctx> {
             storage_type: self.storage_type,
             obj_struct: self.obj_struct,
             is_refcounted: self.is_refcounted,
+            initializer: self.initializer,
         };
 
         ctx.metatypes.insert(self.id.clone(), Some(out));

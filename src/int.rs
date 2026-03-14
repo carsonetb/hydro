@@ -7,7 +7,9 @@ use crate::{
 use inkwell::{
     context::Context,
     types::{AnyTypeEnum, BasicMetadataTypeEnum, BasicTypeEnum, StructType},
-    values::{BasicValueEnum, FunctionValue, IntValue},
+    values::{
+        AnyValue, BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue, StructValue,
+    },
 };
 
 #[derive(Clone, Debug)]
@@ -18,10 +20,6 @@ pub struct Int<'ctx> {
 impl<'ctx> Int<'ctx> {
     pub fn new(value: IntValue<'ctx>) -> Self {
         Self { val: value }
-    }
-
-    pub fn init_body(types: &LLVMTypes<'ctx>, empty: StructType<'ctx>) {
-        empty.set_body(&[types.int_enum()], false);
     }
 
     fn build_binop(
@@ -55,13 +53,61 @@ impl<'ctx> Int<'ctx> {
 }
 
 impl<'ctx> Value<'ctx> for Int<'ctx> {
-    fn member(
-        &self,
-        _ctx: &LanguageContext<'ctx>,
-        _name: String,
-        _into: String,
-    ) -> ValueEnum<'ctx> {
-        panic!()
+    fn member(&self, ctx: &LanguageContext<'ctx>, name: String, into: String) -> ValueEnum<'ctx> {
+        let bin_type = TypeID::new(
+            "Function".to_string(),
+            vec![
+                TypeID::new(
+                    "Tuple".to_string(),
+                    vec![TypeID::from_base("Int".to_string()); 2],
+                ),
+                TypeID::from_base("Int".to_string()),
+            ],
+        );
+        // TODO: Macro this
+        match &name[..] {
+            "+" => ValueEnum::Function(Function::new(
+                ctx,
+                ctx.module
+                    .get_function("Int.+")
+                    .unwrap()
+                    .as_global_value()
+                    .as_pointer_value(),
+                bin_type,
+                "+".to_string(),
+            )),
+            "-" => ValueEnum::Function(Function::new(
+                ctx,
+                ctx.module
+                    .get_function("Int.-")
+                    .unwrap()
+                    .as_global_value()
+                    .as_pointer_value(),
+                bin_type,
+                "-".to_string(),
+            )),
+            "*" => ValueEnum::Function(Function::new(
+                ctx,
+                ctx.module
+                    .get_function("Int.*")
+                    .unwrap()
+                    .as_global_value()
+                    .as_pointer_value(),
+                bin_type,
+                "*".to_string(),
+            )),
+            "/" => ValueEnum::Function(Function::new(
+                ctx,
+                ctx.module
+                    .get_function("Int./")
+                    .unwrap()
+                    .as_global_value()
+                    .as_pointer_value(),
+                bin_type,
+                "/".to_string(),
+            )),
+            _ => panic!(),
+        }
     }
 
     fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeID {
@@ -80,11 +126,30 @@ impl<'ctx> ValueStatic<'ctx> for Int<'ctx> {
         generics: Vec<TypeID>,
     ) {
         assert_eq!(generics.len(), 0);
+
+        macro_rules! build_binop {
+            ($op_name_str:expr, $function_name:ident) => {
+                Int::build_binop(
+                    llvm_ctx,
+                    ctx,
+                    |left, right| {
+                        ctx.builder
+                            .$function_name(left, right, "product")
+                            .unwrap()
+                            .as_any_value_enum()
+                            .into_int_value()
+                    },
+                    $op_name_str.to_string(),
+                )
+            };
+        }
+
+        let typeid = TypeID::from_base("Int".to_string());
         let mut builder = MetatypeBuilder::new(
             ctx,
             BasicBuiltin::Int,
-            TypeID::from_base("Int".to_string()),
-            ctx.types.int_struct,
+            typeid.clone(),
+            None,
             BasicTypeEnum::IntType(ctx.types.int),
             false,
         );
@@ -96,37 +161,13 @@ impl<'ctx> ValueStatic<'ctx> for Int<'ctx> {
                     "Tuple".to_string(),
                     vec![TypeID::from_base("Int".to_string()); 2],
                 ),
-                TypeID::from_base("Int".to_string()),
+                typeid.clone(),
             ],
         );
-        let add_llvm_fn = Int::build_binop(
-            llvm_ctx,
-            ctx,
-            |left, right| ctx.builder.build_int_add(left, right, "sum").unwrap(),
-            "+".to_string(),
-        );
-        let sub_llvm_fn = Int::build_binop(
-            llvm_ctx,
-            ctx,
-            |left, right| ctx.builder.build_int_sub(left, right, "diff").unwrap(),
-            "-".to_string(),
-        );
-        let mul_llvm_fn = Int::build_binop(
-            llvm_ctx,
-            ctx,
-            |left, right| ctx.builder.build_int_mul(left, right, "product").unwrap(),
-            "*".to_string(),
-        );
-        let div_llvm_fn = Int::build_binop(
-            llvm_ctx,
-            ctx,
-            |left, right| {
-                ctx.builder
-                    .build_int_signed_div(left, right, "quotient")
-                    .unwrap()
-            },
-            "/".to_string(),
-        );
+        let add_llvm_fn = build_binop!("+", build_int_add);
+        let sub_llvm_fn = build_binop!("-", build_int_sub);
+        let mul_llvm_fn = build_binop!("*", build_int_mul);
+        let div_llvm_fn = build_binop!("/", build_int_unsigned_div);
         let add_fn = Function::from_function(llvm_ctx, ctx, add_llvm_fn, bin_type.clone());
         let sub_fn = Function::from_function(llvm_ctx, ctx, sub_llvm_fn, bin_type.clone());
         let mul_fn = Function::from_function(llvm_ctx, ctx, mul_llvm_fn, bin_type.clone());
@@ -160,8 +201,7 @@ impl<'ctx> Literal<'ctx> for Int<'ctx> {
     type Repr = IntValue<'ctx>;
 
     fn from_literal(ctx: &LanguageContext<'ctx>, value: Self::LiteralType, _name: String) -> Self {
-        let ir_int = ctx.int(value as u64);
-        Int::new(ir_int)
+        Int::new(ctx.int(value as u64))
     }
 
     fn raw(&self, _ctx: &LanguageContext<'ctx>, _name: String) -> Self::Repr {

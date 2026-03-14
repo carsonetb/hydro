@@ -75,7 +75,7 @@ impl<'ctx> ValueStatic<'ctx> for Tuple<'ctx> {
             ctx,
             BasicBuiltin::Function,
             TypeID::from_base("Function".to_string()),
-            obj_struct,
+            Some(obj_struct),
             BasicTypeEnum::PointerType(ctx.types.ptr),
             false,
         );
