@@ -19,23 +19,28 @@ use crate::{
 pub struct CompileError(Vec<(SimpleSpan, String)>);
 
 impl CompileError {
-    fn new(span: SimpleSpan, reason: String) -> Self {
+    pub fn new(span: SimpleSpan, reason: String) -> Self {
         Self(vec![(span, reason)])
     }
 
-    fn with_notes(msg_span: SimpleSpan, msg: String, note_span: SimpleSpan, note: String) -> Self {
+    pub fn with_notes(
+        msg_span: SimpleSpan,
+        msg: String,
+        note_span: SimpleSpan,
+        note: String,
+    ) -> Self {
         Self(vec![(msg_span, msg), (note_span, note)])
     }
 
-    fn message_span(&self) -> SimpleSpan {
+    pub fn message_span(&self) -> SimpleSpan {
         self.0[0].0
     }
 
-    fn message(&self) -> String {
+    pub fn message(&self) -> String {
         self.0[0].1.clone()
     }
 
-    fn notes(&self) -> Vec<(SimpleSpan, String)> {
+    pub fn notes(&self) -> Vec<(SimpleSpan, String)> {
         self.0[1..].to_vec()
     }
 }
@@ -79,7 +84,7 @@ pub fn gen_expr<'ctx>(
                 ));
             }
             let op_fn = left
-                .member(ctx, op.inner.clone(), op.inner.clone())
+                .member(ctx, op.clone(), op.inner.clone())?
                 .try_as_function()
                 .unwrap();
             op_fn.verify(vec![left_type, right_type]);
@@ -119,9 +124,9 @@ pub fn gen_stmt(ctx: &mut LanguageContext, stmt: &Stmt) -> Result<(), CompileErr
         }
         Stmt::VarSet { name, value } => {
             let expr = gen_expr(ctx, value.as_ref())?;
-            let field = ctx.get_field(name.inner.clone());
+            let field = ctx.get_field(name.clone())?;
             field.release(ctx);
-            ctx.get_field_mut(name.inner.clone()).value = expr;
+            ctx.get_field_mut(name.clone())?.value = expr;
             Ok(())
         }
         Stmt::Expr(expr) => match gen_expr(ctx, expr.as_ref()) {

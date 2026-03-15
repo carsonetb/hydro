@@ -1,3 +1,4 @@
+use chumsky::span::Spanned;
 use inkwell::{
     context::Context,
     types::{AnyTypeEnum, BasicTypeEnum},
@@ -5,6 +6,7 @@ use inkwell::{
 };
 
 use crate::{
+    codegen::CompileError,
     context::LanguageContext,
     types::{BasicBuiltin, MetatypeBuilder, TypeID},
     value::{Copyable, Field, Value, ValueEnum, ValueStatic},
@@ -19,10 +21,22 @@ pub struct Tuple<'ctx> {
 impl<'ctx> Tuple<'ctx> {}
 
 impl<'ctx> Value<'ctx> for Tuple<'ctx> {
-    fn member(&self, ctx: &LanguageContext<'ctx>, name: String, into: String) -> ValueEnum<'ctx> {
-        let as_int = name
-            .parse::<usize>()
-            .expect("Cannot pass a non-number for a tuple member.");
+    fn member(
+        &self,
+        ctx: &LanguageContext<'ctx>,
+        name: Spanned<String>,
+        into: String,
+    ) -> Result<ValueEnum<'ctx>, CompileError> {
+        let as_int = name.parse::<usize>().map_err(|_| {
+            CompileError::new(
+                name.span,
+                format!(
+                    "`{}` has no member `{}`. All Tuple member must be a number.",
+                    self.get_type(ctx),
+                    name.inner
+                ),
+            )
+        })?;
         let member_ptr = ctx
             .builder
             .build_struct_gep(
@@ -31,7 +45,16 @@ impl<'ctx> Value<'ctx> for Tuple<'ctx> {
                 as_int as u32,
                 format!("{into}_field").as_str(),
             )
-            .unwrap();
+            .map_err(|_| {
+                CompileError::new(
+                    name.span,
+                    format!(
+                        "`{}` does not have `{}` items.",
+                        self.get_type(ctx),
+                        as_int + 1
+                    ),
+                )
+            })?;
         let member_val = ctx
             .builder
             .build_load(
@@ -40,12 +63,12 @@ impl<'ctx> Value<'ctx> for Tuple<'ctx> {
                 format!("{into}_val").as_str(),
             )
             .unwrap();
-        ValueEnum::from_val(
+        Ok(ValueEnum::from_val(
             ctx,
             member_val,
             self.metatype.generics[as_int].clone(),
             into,
-        )
+        ))
     }
 
     fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeID {

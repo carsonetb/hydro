@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use chumsky::span::Spanned;
 use inkwell::{
     AddressSpace, OptimizationLevel,
     builder::Builder,
@@ -14,6 +15,7 @@ use inkwell::{
 };
 
 use crate::{
+    bool::Bool,
     callable::Function,
     codegen::CompileError,
     int::Int,
@@ -78,8 +80,9 @@ impl<'ctx> LanguageContext<'ctx> {
             .insert("Function".to_string(), Function::build_metatype);
         self.generic_gens
             .insert("Tuple".to_string(), Tuple::build_metatype);
-        Int::build_metatype(context, self, Vec::<TypeID>::new());
-        Metatype::build_metatype(context, self, Vec::<TypeID>::new());
+        Bool::build_metatype(context, self, vec![]);
+        Int::build_metatype(context, self, vec![]);
+        Metatype::build_metatype(context, self, vec![]);
     }
 
     pub fn reserve_metatype(&mut self, name: TypeID) {
@@ -92,10 +95,9 @@ impl<'ctx> LanguageContext<'ctx> {
             .expect(format!("Could not validate that type {id} exists!").as_str());
     }
 
-    pub fn get_with_gen(&mut self, llvm_ctx: &'ctx Context, id: TypeID) -> Metatype<'ctx> {
-        let maybe = self.maybe_get(id.clone());
-        if maybe.is_some() {
-            maybe.unwrap()
+    pub fn get_with_gen(&mut self, llvm_ctx: &'ctx Context, id: TypeID) -> &Metatype<'ctx> {
+        if self.metatypes.contains_key(&id.clone()) {
+            self.get(id)
         } else {
             self.generic_gens
                 .get(&id.base)
@@ -108,17 +110,21 @@ impl<'ctx> LanguageContext<'ctx> {
         }
     }
 
-    pub fn get(&self, id: TypeID) -> Metatype<'ctx> {
+    pub fn get(&self, id: TypeID) -> &Metatype<'ctx> {
         self.maybe_get(id.clone())
             .expect(format!("Cannot find type {id} or it is not fully initialized.").as_str())
     }
 
-    pub fn maybe_get(&self, id: TypeID) -> Option<Metatype<'ctx>> {
-        self.metatypes.get(&id).cloned().flatten()
+    pub fn maybe_get(&self, id: TypeID) -> Option<&Metatype<'ctx>> {
+        self.metatypes.get(&id).unwrap().as_ref()
     }
 
     pub fn int(&self, value: u64) -> IntValue<'ctx> {
         self.types.int.const_int(value, false)
+    }
+
+    pub fn bool(&self, value: bool) -> IntValue<'ctx> {
+        self.types.bool.const_int(value as u64, false)
     }
 
     pub fn get_struct_with_gen(&mut self, llvm_ctx: &'ctx Context, id: TypeID) -> StructType<'ctx> {
@@ -175,22 +181,31 @@ impl<'ctx> LanguageContext<'ctx> {
             .expect("Cannot get current scope because no scopes have been pushed to stack.")
     }
 
-    pub fn get_field(&self, name: String) -> &Field<'ctx> {
+    pub fn get_field(&self, name: Spanned<String>) -> Result<&Field<'ctx>, CompileError> {
         for scope in self.scope.iter().rev() {
-            if scope.contains_key(&name.clone()) {
-                return scope.get(&name.clone()).unwrap();
+            if scope.contains_key(&name.inner.clone()) {
+                return Ok(scope.get(&name.inner.clone()).unwrap());
             }
         }
-        panic!("No field named {name} in current scope.")
+        Err(CompileError::new(
+            name.span,
+            format!("No field named {} in current scope.", name.inner),
+        ))
     }
 
-    pub fn get_field_mut(&mut self, name: String) -> &mut Field<'ctx> {
+    pub fn get_field_mut(
+        &mut self,
+        name: Spanned<String>,
+    ) -> Result<&mut Field<'ctx>, CompileError> {
         for scope in self.scope.iter_mut().rev() {
-            if scope.contains_key(&name.clone()) {
-                return scope.get_mut(&name.clone()).unwrap();
+            if scope.contains_key(&name.inner.clone()) {
+                return Ok(scope.get_mut(&name.inner.clone()).unwrap());
             }
         }
-        panic!("No field named {name} in current scope.")
+        Err(CompileError::new(
+            name.span,
+            format!("No field named {} in current scope.", name.inner),
+        ))
     }
 }
 

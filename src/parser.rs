@@ -155,19 +155,51 @@ pub fn expr<'src>() -> impl Parser<'src, &'src str, Spanned<Expr>, extra::Err<Ri
         };
     }
 
-    let unary = op!("-")
-        .repeated()
-        .foldr(
-            primary().map(|primary| Expr::Primary(primary)),
-            |op, rhs| Expr::Unary(op.span.make_wrapped(op.inner.to_string()), Box::new(rhs)),
+    let primary_as_expr = primary()
+        .map(|p| p.span.make_wrapped(Expr::Primary(p)))
+        .boxed();
+    let power = primary_as_expr
+        .clone()
+        .foldl(
+            op!("**").then(primary_as_expr).repeated(),
+            |lhs, (op, rhs)| {
+                lhs.span
+                    .union(op.span)
+                    .union(rhs.span)
+                    .make_wrapped(Expr::Binary(
+                        lhs.span.make_wrapped(Box::new(lhs.inner)),
+                        op.span.make_wrapped(op.to_string()),
+                        rhs.span.make_wrapped(Box::new(rhs.inner)),
+                    ))
+            },
         )
-        .spanned()
         .boxed();
 
-    let factor = binary_op!(unary, choice((op!("*"), op!("/"))));
-    let sum = binary_op!(factor, choice((op!("+"), op!("-"))));
+    let unary = op!("-")
+        .repeated()
+        .foldr(power.map(|primary| primary), |op, rhs| {
+            op.span.union(rhs.span).make_wrapped(Expr::Unary(
+                op.span.make_wrapped(op.inner.to_string()),
+                Box::new(rhs.inner),
+            ))
+        })
+        .boxed();
 
-    sum
+    let factor = binary_op!(unary, choice((op!("*"), op!("/"), op!("%"))));
+    let sum = binary_op!(factor, choice((op!("+"), op!("-"))));
+    let shift = binary_op!(sum, choice((op!("<<"), op!(">>"))));
+    let bitwise_and = binary_op!(shift, op!("&"));
+    let bitwise_xor = binary_op!(bitwise_and, op!("^"));
+    let bitwise_or = binary_op!(bitwise_xor, op!("|"));
+    let comparison = binary_op!(
+        bitwise_or,
+        choice((op!("<"), op!(">"), op!("<="), op!(">=")))
+    );
+    let equality = binary_op!(comparison, choice((op!("=="), op!("!="))));
+    let conjunction = binary_op!(equality, op!("&&"));
+    let disjunction = binary_op!(conjunction, op!("||"));
+
+    disjunction
 }
 
 pub fn var_decl<'src>() -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'src, char>>> {

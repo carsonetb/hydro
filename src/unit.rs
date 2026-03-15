@@ -1,9 +1,11 @@
+use chumsky::span::Spanned;
 use inkwell::{
     types::{AnyTypeEnum, BasicTypeEnum},
     values::{BasicValueEnum, PointerValue},
 };
 
 use crate::{
+    codegen::CompileError,
     context::LanguageContext,
     types::{BasicBuiltin, Metatype, MetatypeBuilder, TypeID},
     value::{Field, Value, ValueEnum, ValueStatic},
@@ -16,9 +18,9 @@ impl<'ctx> Value<'ctx> for Unit {
     fn member(
         &self,
         _ctx: &LanguageContext<'ctx>,
-        _name: String,
+        _name: Spanned<String>,
         _into: String,
-    ) -> ValueEnum<'ctx> {
+    ) -> Result<ValueEnum<'ctx>, CompileError> {
         panic!()
     }
 

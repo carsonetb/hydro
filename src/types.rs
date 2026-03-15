@@ -1,5 +1,6 @@
 use std::{collections::HashMap, fmt::Display};
 
+use chumsky::span::Spanned;
 use inkwell::{
     context::Context,
     types::{AnyTypeEnum, BasicTypeEnum, FunctionType, StructType},
@@ -7,6 +8,7 @@ use inkwell::{
 };
 
 use crate::{
+    codegen::CompileError,
     context::LanguageContext,
     value::{Field, Value, ValueEnum, ValueStatic},
 };
@@ -15,6 +17,7 @@ use crate::{
 pub enum BasicBuiltin {
     Unit,
     Type,
+    Bool,
     Int,
     Tuple,
     Function,
@@ -57,18 +60,20 @@ impl Display for TypeID {
 }
 
 #[derive(Debug, Clone)]
-pub struct Member {
+pub struct Member<'ctx> {
     pub typ: TypeID,
     pub index: u32,
+    pub value: ValueEnum<'ctx>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Metatype<'ctx> {
     pub base: BasicBuiltin,
     pub class_name: String,
     pub id: TypeID,
+    pub inherits: Vec<TypeID>,
     pub generics: Vec<TypeID>,
-    members: HashMap<String, Member>,
+    members: HashMap<String, Member<'ctx>>,
     static_ptr: PointerValue<'ctx>,
     pub static_struct: StructType<'ctx>,
     pub obj_struct: Option<StructType<'ctx>>,
@@ -80,11 +85,21 @@ pub struct Metatype<'ctx> {
 impl<'ctx> Metatype<'ctx> {}
 
 impl<'ctx> Value<'ctx> for Metatype<'ctx> {
-    fn member(&self, ctx: &LanguageContext<'ctx>, name: String, into: String) -> ValueEnum<'ctx> {
-        let member = self
-            .members
-            .get(&name)
-            .expect(format!("Cannot get member of name {name} from type {}", self.id).as_str());
+    fn member(
+        &self,
+        ctx: &LanguageContext<'ctx>,
+        name: Spanned<String>,
+        into: String,
+    ) -> Result<ValueEnum<'ctx>, CompileError> {
+        let member = self.members.get(&name.inner).ok_or_else(|| {
+            CompileError::new(
+                name.span,
+                format!(
+                    "Cannot get member of name {} from type {}",
+                    name.inner, self.id
+                ),
+            )
+        })?;
         let member_ptr = ctx
             .builder
             .build_struct_gep(
@@ -102,7 +117,12 @@ impl<'ctx> Value<'ctx> for Metatype<'ctx> {
                 format!("{into}_val").as_str(),
             )
             .unwrap();
-        ValueEnum::from_val(ctx, member_val, member.typ.clone(), into)
+        Ok(ValueEnum::from_val(
+            ctx,
+            member_val,
+            member.typ.clone(),
+            into,
+        ))
     }
 
     fn get_type(&self, _ctx: &LanguageContext<'ctx>) -> TypeID {
@@ -152,6 +172,7 @@ pub struct MetatypeBuilder<'ctx> {
     storage_type: BasicTypeEnum<'ctx>,
     static_values: Vec<BuilderStaticRepr<'ctx>>,
     is_refcounted: bool,
+    inherits: Vec<TypeID>,
     pub initializer: Option<FunctionValue<'ctx>>,
 }
 
@@ -172,8 +193,17 @@ impl<'ctx> MetatypeBuilder<'ctx> {
             obj_struct,
             storage_type,
             static_values: Vec::<BuilderStaticRepr<'ctx>>::new(),
+            inherits: Vec::<TypeID>::new(),
             is_refcounted,
             initializer: None,
+        }
+    }
+
+    pub fn add_parent(&mut self, ctx: LanguageContext<'ctx>, id: TypeID) {
+        self.inherits.push(id.clone());
+        let metatype = ctx.get(id);
+        for (name, member) in metatype.members.clone() {
+            self.add_static(name, member.value);
         }
     }
 
@@ -210,6 +240,7 @@ impl<'ctx> MetatypeBuilder<'ctx> {
                 Member {
                     typ: val.val.get_type(ctx),
                     index: i,
+                    value: val.val,
                 },
             );
 
@@ -223,6 +254,7 @@ impl<'ctx> MetatypeBuilder<'ctx> {
             class_name: name.to_string(),
             id: self.id.clone(),
             members,
+            inherits: self.inherits.clone(),
             generics,
             static_ptr,
             static_struct,

@@ -1,0 +1,29 @@
+{
+  "tags": [
+    "TODO",
+    "WIP",
+    "MAYBE",
+    "FIXME",
+    "BUG",
+    "ERROR",
+    "HACK",
+    "WARN",
+    "WARNING",
+    "FIX",
+    "NOTE",
+    "XXX",
+    "INFO",
+    "DOCS",
+    "PERF",
+    "TEST",
+    "IDEA"
+  ],
+  "include": [],
+  "exclude": ["src/clib"],
+  "json": false,
+  "flat": false,
+  "no_color": false,
+  "custom_pattern": null,
+  "ignore_case": false,
+  "require_colon": true
+}

@@ -1,3 +1,4 @@
+use chumsky::span::Spanned;
 use inkwell::{
     context::Context,
     types::{AnyTypeEnum, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, StructType},
@@ -5,6 +6,7 @@ use inkwell::{
 };
 
 use crate::{
+    codegen::CompileError,
     context::LanguageContext,
     types::{BasicBuiltin, Metatype, MetatypeBuilder, TypeID},
     unit::Unit,
@@ -20,13 +22,7 @@ pub trait Callable<'ctx> {
         into_name: String,
     ) -> ValueEnum<'ctx>;
     fn args(&self) -> Vec<TypeID>;
-    fn args_meta(&self, ctx: &LanguageContext<'ctx>) -> Vec<Metatype<'ctx>> {
-        self.args().iter().map(|a| ctx.get(a.clone())).collect()
-    }
     fn returns(&self) -> TypeID;
-    fn returns_meta(&self, ctx: &LanguageContext<'ctx>) -> Metatype<'ctx> {
-        ctx.get(self.returns())
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -102,7 +98,7 @@ impl<'ctx> Callable<'ctx> for Function<'ctx> {
                 format!("{}_returns", self.name),
             )
         } else {
-            assert_eq!(self.returns_meta(ctx).base, BasicBuiltin::Unit);
+            assert_eq!(ctx.get(self.returns()).base, BasicBuiltin::Unit);
             ValueEnum::Unit(Unit {})
         }
     }
@@ -120,10 +116,13 @@ impl<'ctx> Value<'ctx> for Function<'ctx> {
     fn member(
         &self,
         _ctx: &LanguageContext<'ctx>,
-        _name: String,
+        name: Spanned<String>,
         _into: String,
-    ) -> ValueEnum<'ctx> {
-        panic!()
+    ) -> Result<ValueEnum<'ctx>, CompileError> {
+        Err(CompileError::new(
+            name.span,
+            format!("Function types have no members!"),
+        ))
     }
 
     fn get_type(&self, _ctx: &LanguageContext<'ctx>) -> TypeID {

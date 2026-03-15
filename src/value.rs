@@ -1,3 +1,4 @@
+use chumsky::span::Spanned;
 use enum_dispatch::enum_dispatch;
 use inkwell::{
     context::Context,
@@ -7,7 +8,9 @@ use inkwell::{
 use strum_macros::EnumTryAs;
 
 use crate::{
+    bool::Bool,
     callable::Function,
+    codegen::CompileError,
     context::LanguageContext,
     int::Int,
     tuple::Tuple,
@@ -48,9 +51,10 @@ impl<'ctx> Field<'ctx> {
 }
 
 #[enum_dispatch]
-#[derive(Debug, EnumTryAs)]
+#[derive(Debug, EnumTryAs, Clone)]
 pub enum ValueEnum<'ctx> {
     Unit(Unit),
+    Bool(Bool<'ctx>),
     Int(Int<'ctx>),
     Tuple(Tuple<'ctx>),
     Function(Function<'ctx>),
@@ -66,6 +70,7 @@ impl<'ctx> ValueEnum<'ctx> {
         match ctx.get(typ.clone()).base {
             BasicBuiltin::Unit => panic!(),
             BasicBuiltin::Type => panic!(),
+            BasicBuiltin::Bool => Self::Bool(Bool::from_val(ctx, val, typ, name)),
             BasicBuiltin::Int => Self::Int(Int::from_val(ctx, val, typ, name)),
             BasicBuiltin::Function => Self::Function(Function::from_val(ctx, val, typ, name)),
             BasicBuiltin::Tuple => Self::Tuple(Tuple::from_val(ctx, val, typ, name)),
@@ -75,7 +80,12 @@ impl<'ctx> ValueEnum<'ctx> {
 
 #[enum_dispatch(ValueEnum)]
 pub trait Value<'ctx> {
-    fn member(&self, ctx: &LanguageContext<'ctx>, name: String, into: String) -> ValueEnum<'ctx>;
+    fn member(
+        &self,
+        ctx: &LanguageContext<'ctx>,
+        name: Spanned<String>,
+        into: String,
+    ) -> Result<ValueEnum<'ctx>, CompileError>;
     fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeID;
     fn get_value(&self) -> BasicValueEnum<'ctx>;
 }
