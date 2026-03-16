@@ -65,7 +65,6 @@ impl<'ctx> Value<'ctx> for Int<'ctx> {
         name: Spanned<String>,
         into: String,
     ) -> Result<ValueEnum<'ctx>, CompileError> {
-        // TODO: Some functions use compare function not this.
         let bin_type = TypeID::new(
             "Function".to_string(),
             vec![
@@ -76,9 +75,11 @@ impl<'ctx> Value<'ctx> for Int<'ctx> {
                 TypeID::from_base("Int".to_string()),
             ],
         );
+        let mut cmp_type = bin_type.clone();
+        cmp_type.generics[1] = TypeID::from_base("Bool".to_string());
 
         macro_rules! op_fun_wrapper {
-            ($op_name:expr, $fn_name:expr) => {
+            ($op_name:expr, $fn_name:expr, $ty:expr) => {
                 Ok(ValueEnum::Function(Function::new(
                     ctx,
                     ctx.module
@@ -86,29 +87,29 @@ impl<'ctx> Value<'ctx> for Int<'ctx> {
                         .unwrap()
                         .as_global_value()
                         .as_pointer_value(),
-                    bin_type,
+                    $ty,
                     $op_name.to_string(),
                 )))
             };
         }
 
         match &name.inner[..] {
-            "+" => op_fun_wrapper!("+", "Int.+"),
-            "-" => op_fun_wrapper!("-", "Int.-"),
-            "*" => op_fun_wrapper!("*", "Int.*"),
-            "/" => op_fun_wrapper!("/", "Int./"),
-            "%" => op_fun_wrapper!("%", "Int.%"),
-            "<<" => op_fun_wrapper!("<<", "Int.<<"),
-            ">>" => op_fun_wrapper!(">>", "Int.>>"),
-            "&" => op_fun_wrapper!("&", "Int.&"),
-            "^" => op_fun_wrapper!("^", "Int.^"),
-            "|" => op_fun_wrapper!("|", "Int.|"),
-            ">" => op_fun_wrapper!(">", "Int.>"),
-            "<" => op_fun_wrapper!("<", "Int.<"),
-            "<=" => op_fun_wrapper!("<=", "Int.<="),
-            ">=" => op_fun_wrapper!(">=", "Int.>="),
-            "==" => op_fun_wrapper!("==", "Int.=="),
-            "!=" => op_fun_wrapper!("!=", "Int.!="),
+            "+" => op_fun_wrapper!("+", "Int.+", bin_type),
+            "-" => op_fun_wrapper!("-", "Int.-", bin_type),
+            "*" => op_fun_wrapper!("*", "Int.*", bin_type),
+            "/" => op_fun_wrapper!("/", "Int./", bin_type),
+            "%" => op_fun_wrapper!("%", "Int.%", bin_type),
+            "<<" => op_fun_wrapper!("<<", "Int.<<", bin_type),
+            ">>" => op_fun_wrapper!(">>", "Int.>>", bin_type),
+            "&" => op_fun_wrapper!("&", "Int.&", bin_type),
+            "^" => op_fun_wrapper!("^", "Int.^", bin_type),
+            "|" => op_fun_wrapper!("|", "Int.|", bin_type),
+            ">" => op_fun_wrapper!(">", "Int.>", cmp_type),
+            "<" => op_fun_wrapper!("<", "Int.<", cmp_type),
+            "<=" => op_fun_wrapper!("<=", "Int.<=", cmp_type),
+            ">=" => op_fun_wrapper!(">=", "Int.>=", cmp_type),
+            "==" => op_fun_wrapper!("==", "Int.==", cmp_type),
+            "!=" => op_fun_wrapper!("!=", "Int.!=", cmp_type),
             _ => Err(CompileError::new(
                 name.span,
                 format!("Type `Int` has no `{}` operator.", name.inner),

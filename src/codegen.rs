@@ -1,4 +1,5 @@
 use std::{
+    any::Any,
     fs::File,
     io::Read,
     path::{Path, PathBuf},
@@ -8,6 +9,7 @@ use ariadne::{Color, Label, Report, ReportKind, Source};
 use chumsky::span::SimpleSpan;
 
 use crate::{
+    bool::Bool,
     callable::Callable,
     context::LanguageContext,
     int::Int,
@@ -48,19 +50,27 @@ impl CompileError {
 pub fn gen_literal<'ctx>(ctx: &LanguageContext<'ctx>, literal: &ParseLiteral) -> ValueEnum<'ctx> {
     match literal {
         ParseLiteral::Error(_) => panic!(),
-        ParseLiteral::Int(int) => {
-            ValueEnum::Int(Int::from_literal(ctx, int.clone(), "int".to_string()))
+        ParseLiteral::Int(int) => ValueEnum::Int(Int::from_literal(ctx, *int, "int".to_string())),
+        ParseLiteral::Bool(bool) => {
+            ValueEnum::Bool(Bool::from_literal(ctx, *bool, "bool".to_string()))
         }
     }
 }
 
-pub fn gen_atom<'ctx>(ctx: &LanguageContext<'ctx>, atom: &Atom) -> ValueEnum<'ctx> {
+pub fn gen_atom<'ctx>(
+    ctx: &LanguageContext<'ctx>,
+    atom: &Atom,
+) -> Result<ValueEnum<'ctx>, CompileError> {
     match atom {
-        Atom::Literal(literal) => gen_literal(ctx, literal),
+        Atom::Literal(literal) => Ok(gen_literal(ctx, literal)),
+        Atom::Grouping(expr) => gen_expr(ctx, expr),
     }
 }
 
-pub fn gen_primary<'ctx>(ctx: &LanguageContext<'ctx>, prim: &Primary) -> ValueEnum<'ctx> {
+pub fn gen_primary<'ctx>(
+    ctx: &LanguageContext<'ctx>,
+    prim: &Primary,
+) -> Result<ValueEnum<'ctx>, CompileError> {
     match prim {
         Primary::Atom(atom) => gen_atom(ctx, atom),
     }
@@ -73,24 +83,34 @@ pub fn gen_expr<'ctx>(
     match expr {
         Expr::Unary(op, right) => todo!(),
         Expr::Binary(left, op, right) => {
-            let left = gen_expr(ctx, left).unwrap();
-            let right = gen_expr(ctx, right).unwrap();
-            let left_type = left.get_type(ctx);
-            let right_type = right.get_type(ctx);
+            let left_val = gen_expr(ctx, left)?;
+            let right_val = gen_expr(ctx, right)?;
+            let left_type = left_val.get_type(ctx);
+            let right_type = right_val.get_type(ctx);
             if left_type != right_type {
-                return Err(CompileError::new(
-                    op.span,
-                    format!("Cannot use operator '{}' on different types!", op.inner),
-                ));
+                return Err(CompileError(vec![
+                    (
+                        op.span,
+                        format!("Cannot use operator `{}` on different types.", op.inner),
+                    ),
+                    (
+                        left.span,
+                        format!("Left operator is of type `{}`.", left_val.get_type(ctx)),
+                    ),
+                    (
+                        right.span,
+                        format!("Right operator is of type `{}`.", right_val.get_type(ctx)),
+                    ),
+                ]));
             }
-            let op_fn = left
+            let op_fn = left_val
                 .member(ctx, op.clone(), op.inner.clone())?
                 .try_as_function()
                 .unwrap();
             op_fn.verify(vec![left_type, right_type]);
-            Ok(op_fn.call(ctx, vec![left, right], "binary".to_string()))
+            Ok(op_fn.call(ctx, vec![left_val, right_val], "binary".to_string()))
         }
-        Expr::Primary(primary) => Ok(gen_primary(ctx, primary)),
+        Expr::Primary(primary) => gen_primary(ctx, primary),
     }
 }
 

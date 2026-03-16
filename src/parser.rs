@@ -50,12 +50,14 @@ pub enum Primary {
 #[derive(Debug)]
 pub enum Atom {
     Literal(Spanned<ParseLiteral>),
+    Grouping(Spanned<Expr>),
 }
 
 #[derive(Debug)]
 pub enum ParseLiteral {
     Error(ErrorKind),
     Int(u32),
+    Bool(bool),
 }
 
 #[derive(Debug)]
@@ -109,39 +111,73 @@ pub fn type_parser<'src>()
 
 pub fn literal<'src>()
 -> impl Parser<'src, &'src str, Spanned<ParseLiteral>, extra::Err<Rich<'src, char>>> {
-    text::int(10)
-        .padded()
+    let int = text::int(10)
         .from_str()
         .map(|r| match r {
             Ok(int) => ParseLiteral::Int(int),
             Err(_) => ParseLiteral::Error(ErrorKind::Unknown),
         })
         .spanned()
-        .boxed()
+        .labelled("number");
+    let bool = just("true")
+        .map(|_| ParseLiteral::Bool(true))
+        .or(just("false").map(|_| ParseLiteral::Bool(false)))
+        .spanned()
+        .labelled("boolean");
+    int.or(bool).padded()
 }
 
-pub fn atom<'src>() -> impl Parser<'src, &'src str, Spanned<Box<Atom>>, extra::Err<Rich<'src, char>>>
-{
-    literal().map(|l| Box::new(Atom::Literal(l))).spanned()
+pub fn atom<'src>(
+    expr: impl Parser<'src, &'src str, Spanned<Expr>, extra::Err<Rich<'src, char>>>,
+) -> impl Parser<'src, &'src str, Spanned<Box<Atom>>, extra::Err<Rich<'src, char>>> {
+    literal()
+        .map(|l| l.span.make_wrapped(Box::new(Atom::Literal(l))))
+        .or(expr
+            .delimited_by(just("("), just(")"))
+            .spanned()
+            .map(|e| e.span.make_wrapped(Box::new(Atom::Grouping(e.inner)))))
 }
 
-pub fn primary<'src>()
--> impl Parser<'src, &'src str, Spanned<Box<Primary>>, extra::Err<Rich<'src, char>>> {
-    atom().map(|atom| Box::new(Primary::Atom(atom))).spanned()
+pub fn primary<'src>(
+    expr: impl Parser<'src, &'src str, Spanned<Expr>, extra::Err<Rich<'src, char>>>,
+) -> impl Parser<'src, &'src str, Spanned<Box<Primary>>, extra::Err<Rich<'src, char>>> {
+    atom(expr).map(|atom| atom.span.make_wrapped(Box::new(Primary::Atom(atom))))
 }
 
 pub fn expr<'src>() -> impl Parser<'src, &'src str, Spanned<Expr>, extra::Err<Rich<'src, char>>> {
     macro_rules! op {
         ($c:expr) => {
-            just($c).padded().spanned()
+            just($c).spanned().padded()
         };
     }
 
-    macro_rules! binary_op {
-        ($prev_rule:expr, $ops:expr) => {
-            $prev_rule
-                .clone()
-                .foldl($ops.then($prev_rule).repeated(), |lhs, (op, rhs)| {
+    recursive(|expr| {
+        macro_rules! binary_op {
+            ($prev_rule:expr, $ops:expr) => {
+                $prev_rule
+                    .clone()
+                    .foldl($ops.then($prev_rule).repeated(), |lhs, (op, rhs)| {
+                        lhs.span
+                            .union(op.span)
+                            .union(rhs.span)
+                            .make_wrapped(Expr::Binary(
+                                lhs.span.make_wrapped(Box::new(lhs.inner)),
+                                op.span.make_wrapped(op.to_string()),
+                                rhs.span.make_wrapped(Box::new(rhs.inner)),
+                            ))
+                    })
+                    .boxed()
+            };
+        }
+
+        let primary_as_expr = primary(expr)
+            .map(|p| p.span.make_wrapped(Expr::Primary(p)))
+            .boxed();
+        let power = primary_as_expr
+            .clone()
+            .foldl(
+                op!("**").then(primary_as_expr).repeated(),
+                |lhs, (op, rhs)| {
                     lhs.span
                         .union(op.span)
                         .union(rhs.span)
@@ -150,56 +186,36 @@ pub fn expr<'src>() -> impl Parser<'src, &'src str, Spanned<Expr>, extra::Err<Ri
                             op.span.make_wrapped(op.to_string()),
                             rhs.span.make_wrapped(Box::new(rhs.inner)),
                         ))
-                })
-                .boxed()
-        };
-    }
+                },
+            )
+            .boxed();
 
-    let primary_as_expr = primary()
-        .map(|p| p.span.make_wrapped(Expr::Primary(p)))
-        .boxed();
-    let power = primary_as_expr
-        .clone()
-        .foldl(
-            op!("**").then(primary_as_expr).repeated(),
-            |lhs, (op, rhs)| {
-                lhs.span
-                    .union(op.span)
-                    .union(rhs.span)
-                    .make_wrapped(Expr::Binary(
-                        lhs.span.make_wrapped(Box::new(lhs.inner)),
-                        op.span.make_wrapped(op.to_string()),
-                        rhs.span.make_wrapped(Box::new(rhs.inner)),
-                    ))
-            },
-        )
-        .boxed();
+        let unary = op!("-")
+            .repeated()
+            .foldr(power.map(|primary| primary), |op, rhs| {
+                op.span.union(rhs.span).make_wrapped(Expr::Unary(
+                    op.span.make_wrapped(op.inner.to_string()),
+                    Box::new(rhs.inner),
+                ))
+            })
+            .boxed();
 
-    let unary = op!("-")
-        .repeated()
-        .foldr(power.map(|primary| primary), |op, rhs| {
-            op.span.union(rhs.span).make_wrapped(Expr::Unary(
-                op.span.make_wrapped(op.inner.to_string()),
-                Box::new(rhs.inner),
-            ))
-        })
-        .boxed();
+        let factor = binary_op!(unary, choice((op!("*"), op!("/"), op!("%"))));
+        let sum = binary_op!(factor, choice((op!("+"), op!("-"))));
+        let shift = binary_op!(sum, choice((op!("<<"), op!(">>"))));
+        let bitwise_and = binary_op!(shift, op!("&"));
+        let bitwise_xor = binary_op!(bitwise_and, op!("^"));
+        let bitwise_or = binary_op!(bitwise_xor, op!("|"));
+        let comparison = binary_op!(
+            bitwise_or,
+            choice((op!("<="), op!(">="), op!("<"), op!(">")))
+        );
+        let equality = binary_op!(comparison, choice((op!("=="), op!("!="))));
+        let conjunction = binary_op!(equality, op!("&&"));
+        let disjunction = binary_op!(conjunction, op!("||"));
 
-    let factor = binary_op!(unary, choice((op!("*"), op!("/"), op!("%"))));
-    let sum = binary_op!(factor, choice((op!("+"), op!("-"))));
-    let shift = binary_op!(sum, choice((op!("<<"), op!(">>"))));
-    let bitwise_and = binary_op!(shift, op!("&"));
-    let bitwise_xor = binary_op!(bitwise_and, op!("^"));
-    let bitwise_or = binary_op!(bitwise_xor, op!("|"));
-    let comparison = binary_op!(
-        bitwise_or,
-        choice((op!("<"), op!(">"), op!("<="), op!(">=")))
-    );
-    let equality = binary_op!(comparison, choice((op!("=="), op!("!="))));
-    let conjunction = binary_op!(equality, op!("&&"));
-    let disjunction = binary_op!(conjunction, op!("||"));
-
-    disjunction
+        disjunction
+    })
 }
 
 pub fn var_decl<'src>() -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'src, char>>> {

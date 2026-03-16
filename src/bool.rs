@@ -3,7 +3,7 @@ use inkwell::{
     IntPredicate,
     context::Context,
     types::{BasicMetadataTypeEnum, BasicTypeEnum},
-    values::{BasicValueEnum, FunctionValue, IntValue},
+    values::{AnyValue, BasicValueEnum, FunctionValue, IntValue},
 };
 
 use crate::{
@@ -30,15 +30,11 @@ impl<'ctx> Bool<'ctx> {
         ctx: &LanguageContext<'ctx>,
         op_builder: impl Fn(IntValue<'ctx>, IntValue<'ctx>) -> IntValue<'ctx>,
         op_name: String,
-        boolean: bool,
     ) -> FunctionValue<'ctx> {
-        let ret = if boolean {
-            ctx.types.bool
-        } else {
-            ctx.types.int
-        };
-        let add_llvm_type =
-            ret.fn_type(&[BasicMetadataTypeEnum::IntType(ctx.types.bool); 2], false);
+        let add_llvm_type = ctx
+            .types
+            .bool
+            .fn_type(&[BasicMetadataTypeEnum::IntType(ctx.types.bool); 2], false);
         let add_llvm_fn =
             ctx.module
                 .add_function(format!("Bool.{op_name}").as_str(), add_llvm_type, None);
@@ -51,8 +47,7 @@ impl<'ctx> Bool<'ctx> {
         left.set_name("lhs");
         right.set_name("rhs");
         let result = op_builder(left, right);
-        let as_int = Int::new(result);
-        ctx.builder.build_return(Some(&as_int.get_value())).unwrap();
+        ctx.builder.build_return(Some(&result)).unwrap();
         ctx.builder.position_at_end(old_block);
 
         add_llvm_fn
@@ -97,6 +92,8 @@ impl<'ctx> Value<'ctx> for Bool<'ctx> {
         match &name.inner[..] {
             "==" => op_fun_wrapper!("==", "Bool.=="),
             "!=" => op_fun_wrapper!("!=", "Bool.!="),
+            "||" => op_fun_wrapper!("||", "Bool.||"),
+            "&&" => op_fun_wrapper!("&&", "Int.&&"),
             _ => Err(CompileError::new(
                 name.span,
                 format!("Type `Bool` has no `{}` operator.", name.inner),
@@ -105,7 +102,7 @@ impl<'ctx> Value<'ctx> for Bool<'ctx> {
     }
 
     fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeID {
-        TypeID::from_base("Int".to_string())
+        TypeID::from_base("Bool".to_string())
     }
 
     fn get_value(&self) -> BasicValueEnum<'ctx> {
@@ -121,6 +118,23 @@ impl<'ctx> ValueStatic<'ctx> for Bool<'ctx> {
     ) {
         assert_eq!(generics.len(), 0);
 
+        macro_rules! build_binop {
+            ($op_name_str:expr, $function_name:ident) => {
+                Self::build_binop(
+                    llvm_ctx,
+                    ctx,
+                    |left, right| {
+                        ctx.builder
+                            .$function_name(left, right, "result")
+                            .unwrap()
+                            .as_any_value_enum()
+                            .into_int_value()
+                    },
+                    $op_name_str.to_string(),
+                )
+            };
+        }
+
         macro_rules! build_cmpop {
             ($op_name_str:expr, $predicate:expr) => {
                 Self::build_binop(
@@ -132,7 +146,6 @@ impl<'ctx> ValueStatic<'ctx> for Bool<'ctx> {
                             .unwrap()
                     },
                     $op_name_str.to_string(),
-                    true,
                 )
             };
         }
@@ -149,10 +162,16 @@ impl<'ctx> ValueStatic<'ctx> for Bool<'ctx> {
 
         let eqa_llvm_fn = build_cmpop!("==", IntPredicate::EQ);
         let neq_llvm_fn = build_cmpop!("!=", IntPredicate::NE);
+        let or_llvm_fn = build_binop!("||", build_or);
+        let and_llvm_fn = build_binop!("&&", build_and);
         let eqa_fn = Function::from_function(llvm_ctx, ctx, eqa_llvm_fn, Self::cmp_type());
         let neq_fn = Function::from_function(llvm_ctx, ctx, neq_llvm_fn, Self::cmp_type());
+        let or_fn = Function::from_function(llvm_ctx, ctx, or_llvm_fn, Self::cmp_type());
+        let and_fn = Function::from_function(llvm_ctx, ctx, and_llvm_fn, Self::cmp_type());
         builder.add_static("==".to_string(), ValueEnum::Function(eqa_fn));
         builder.add_static("!=".to_string(), ValueEnum::Function(neq_fn));
+        builder.add_static("||".to_string(), ValueEnum::Function(or_fn));
+        builder.add_static("&&".to_string(), ValueEnum::Function(and_fn));
 
         builder.build(llvm_ctx, ctx, generics);
     }
