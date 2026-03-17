@@ -17,7 +17,18 @@ pub enum ErrorKind {
 
 #[derive(Debug)]
 pub struct Program {
-    pub stmts: Vec<Stmt>,
+    pub decls: Vec<Decl>,
+}
+
+#[derive(Debug)]
+pub enum Decl {
+    Function {
+        name: Spanned<String>,
+        generics: Vec<GenericParam>,
+        params: Vec<(Spanned<String>, Spanned<ParserType>)>,
+        returns: Option<Spanned<ParserType>>,
+        body: Vec<Spanned<Stmt>>,
+    },
 }
 
 #[derive(Debug)]
@@ -60,10 +71,17 @@ pub enum ParseLiteral {
     Bool(bool),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ParserType {
     pub base: Spanned<String>,
     pub generics: Vec<Spanned<ParserType>>,
+}
+
+#[derive(Debug)]
+pub struct GenericParam {
+    pub span: SimpleSpan,
+    pub alias: Spanned<String>,
+    pub inherits: Option<Spanned<TypeID>>,
 }
 
 impl ParserType {
@@ -264,19 +282,54 @@ pub fn stmt<'src>() -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'src, 
         .boxed()
 }
 
-pub fn block<'src>() -> impl Parser<'src, &'src str, Vec<Stmt>, extra::Err<Rich<'src, char>>> {
+pub fn block<'src>()
+-> impl Parser<'src, &'src str, Vec<Spanned<Stmt>>, extra::Err<Rich<'src, char>>> {
     stmt()
+        .spanned()
         .repeated()
         .collect::<Vec<_>>()
         .delimited_by(just("{").padded(), just("}").padded())
 }
 
+pub fn decl<'src>() -> impl Parser<'src, &'src str, Decl, extra::Err<Rich<'src, char>>> {
+    let decl = text::keyword("fn")
+        .padded()
+        .ignore_then(text::ident().spanned().padded()) // TODO: Function generic params.
+        .then(
+            text::ident()
+                .spanned()
+                .padded()
+                .then_ignore(just(":").padded())
+                .then(type_parser())
+                .map(|(name, typ)| (name.span.make_wrapped(name.inner.to_string()), typ))
+                .separated_by(just(",").padded())
+                .collect::<Vec<_>>()
+                .delimited_by(just("("), just(")"))
+                .or_not(),
+        )
+        .then(just("->").padded().ignore_then(type_parser()).or_not())
+        .then(block())
+        .map(|(((name, params), returns), body)| Decl::Function {
+            name: name.span.make_wrapped(name.inner.to_string()),
+            generics: vec![],
+            params: if params.is_some() {
+                params.unwrap()
+            } else {
+                vec![]
+            },
+            returns,
+            body,
+        })
+        .boxed();
+    decl
+}
+
 pub fn program<'src>() -> impl Parser<'src, &'src str, Program, extra::Err<Rich<'src, char>>> {
-    stmt()
+    decl()
         .repeated()
         .collect::<Vec<_>>()
         .then_ignore(end().padded())
-        .map(|stmts| Program { stmts })
+        .map(|decls| Program { decls })
 }
 
 pub fn parse<'src>(path: PathBuf) -> Option<Program> {

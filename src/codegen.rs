@@ -6,14 +6,20 @@ use std::{
 };
 
 use ariadne::{Color, Label, Report, ReportKind, Source};
-use chumsky::span::SimpleSpan;
+use chumsky::span::{SimpleSpan, Spanned, WrappingSpan};
+use inkwell::{
+    context::Context,
+    module::Linkage,
+    types::{BasicType, FunctionType},
+};
 
 use crate::{
     bool::Bool,
-    callable::Callable,
+    callable::{Callable, Function},
     context::LanguageContext,
     int::Int,
-    parser::{Atom, Expr, ParseLiteral, Primary, Program, Stmt},
+    parser::{Atom, Decl, Expr, ParseLiteral, Primary, Program, Stmt},
+    types::{Metatype, TypeID},
     value::{Field, Literal, Value, ValueEnum},
 };
 
@@ -156,7 +162,86 @@ pub fn gen_stmt(ctx: &mut LanguageContext, stmt: &Stmt) -> Result<(), CompileErr
     }
 }
 
-pub fn do_codegen(ctx: &mut LanguageContext, path: PathBuf, program: Program) {
+pub fn gen_decl<'ctx>(
+    llvm_ctx: &'ctx Context,
+    ctx: &mut LanguageContext<'ctx>,
+    decl: &Decl,
+) -> Result<(), CompileError> {
+    match decl {
+        Decl::Function {
+            name,
+            generics,
+            params,
+            returns,
+            body,
+        } => {
+            let scope = ctx.current_scope();
+            if scope.contains_key(&name.inner) {
+                return Err(CompileError::new(
+                    name.span,
+                    "A function with this name already exists.".to_string(),
+                ));
+            }
+            for (name, typ) in params {
+                ctx.get_with_gen(llvm_ctx, typ.span.make_wrapped(typ.inner.to_typeid()))?;
+            }
+            let param_types = params
+                .iter()
+                .map(|(_, t)| ctx.get(t.to_typeid()).storage_type.into())
+                .collect::<Vec<_>>();
+            let returns = if returns.is_some() {
+                let returns = returns.clone().unwrap();
+                ctx.get_with_gen(
+                    llvm_ctx,
+                    returns.span.make_wrapped(returns.inner.to_typeid()),
+                )?
+            } else {
+                ctx.get(TypeID::from_base("Unit".to_string()))
+            };
+            let llvm_function_typ = returns.storage_type.fn_type(&param_types, false);
+            let llvm_function = ctx.module.add_function(&name, llvm_function_typ, None);
+            let function_typ = TypeID::new(
+                "Function".to_string(),
+                params
+                    .iter()
+                    .map(|(_, typ)| typ.inner.to_typeid())
+                    .collect(),
+            );
+            let function = Function::from_function(llvm_ctx, ctx, llvm_function, function_typ);
+            ctx.add_field(
+                name.inner.clone(),
+                Field::new(ValueEnum::Function(function), name.inner.clone()),
+            );
+
+            let prev = ctx.builder.get_insert_block().unwrap();
+            let entry = llvm_ctx.append_basic_block(llvm_function, "entry");
+            ctx.builder.position_at_end(entry);
+            ctx.push_scope();
+
+            for ((name, typ), value) in params.iter().zip(llvm_function.get_params()) {
+                let value = ValueEnum::from_val(ctx, value, typ.to_typeid(), name.inner.clone());
+                ctx.add_field(name.inner.clone(), Field::new(value, name.inner.clone()));
+            }
+
+            for stmt in body {
+                gen_stmt(ctx, stmt)?
+            }
+
+            ctx.builder.build_return(None);
+            ctx.pop_scope();
+            ctx.builder.position_at_end(prev);
+
+            Ok(())
+        }
+    }
+}
+
+pub fn do_codegen<'ctx>(
+    llvm_ctx: &'ctx Context,
+    ctx: &mut LanguageContext<'ctx>,
+    path: PathBuf,
+    program: Program,
+) {
     let filename = path
         .clone()
         .file_name()
@@ -169,8 +254,8 @@ pub fn do_codegen(ctx: &mut LanguageContext, path: PathBuf, program: Program) {
 
     ctx.push_scope();
 
-    for stmt in program.stmts.iter() {
-        match gen_stmt(ctx, stmt) {
+    for decl in program.decls.iter() {
+        match gen_decl(llvm_ctx, ctx, decl) {
             Ok(_) => continue,
             Err(err) => ctx.error(err),
         }

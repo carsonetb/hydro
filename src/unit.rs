@@ -1,6 +1,6 @@
 use chumsky::span::Spanned;
 use inkwell::{
-    types::{AnyTypeEnum, BasicTypeEnum},
+    types::{AnyTypeEnum, BasicTypeEnum, VoidType},
     values::{BasicValueEnum, PointerValue},
 };
 
@@ -45,7 +45,7 @@ impl<'ctx> ValueStatic<'ctx> for Unit {
             BasicBuiltin::Unit,
             TypeID::from_base("Unit".to_string()),
             None,
-            BasicTypeEnum::PointerType(ctx.types.ptr),
+            // TODO: Void type?,
             false,
         );
         builder.build(llvm_ctx, ctx, generics);

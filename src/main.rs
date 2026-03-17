@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     ctx.init_metatypes(&llvm_ctx);
 
-    do_codegen(&mut ctx, path, program);
+    do_codegen(&llvm_ctx, &mut ctx, path, program);
 
     ctx.builder.build_return(Some(&ctx.int(0))).unwrap();
 

@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt::Display};
 
-use chumsky::span::Spanned;
+use chumsky::span::{SimpleSpan, Span, Spanned, WrappingSpan};
 use inkwell::{
     context::Context,
     types::{AnyTypeEnum, BasicTypeEnum, FunctionType, StructType},
@@ -226,7 +226,13 @@ impl<'ctx> MetatypeBuilder<'ctx> {
         let internals: Vec<BasicTypeEnum<'ctx>> = self
             .static_values
             .iter()
-            .map(|v| ctx.get_storage_with_gen(llvm_ctx, v.val.get_type(ctx)))
+            .map(|v| {
+                ctx.get_storage_with_gen(
+                    llvm_ctx,
+                    SimpleSpan::new((), 0..0).make_wrapped(v.val.get_type(ctx)),
+                )
+                .unwrap()
+            })
             .collect();
         static_struct.set_body(&internals, false);
         let mut i = 0;

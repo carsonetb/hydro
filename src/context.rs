@@ -21,6 +21,7 @@ use crate::{
     int::Int,
     tuple::Tuple,
     types::{Metatype, TypeID},
+    unit::Unit,
     value::{Field, ValueStatic},
 };
 
@@ -80,6 +81,7 @@ impl<'ctx> LanguageContext<'ctx> {
             .insert("Function".to_string(), Function::build_metatype);
         self.generic_gens
             .insert("Tuple".to_string(), Tuple::build_metatype);
+        Unit::build_metatype(context, self, vec![]);
         Bool::build_metatype(context, self, vec![]);
         Int::build_metatype(context, self, vec![]);
         Metatype::build_metatype(context, self, vec![]);
@@ -95,24 +97,39 @@ impl<'ctx> LanguageContext<'ctx> {
             .expect(format!("Could not validate that type {id} exists!").as_str());
     }
 
-    pub fn get_with_gen(&mut self, llvm_ctx: &'ctx Context, id: TypeID) -> &Metatype<'ctx> {
+    pub fn get_with_gen(
+        &mut self,
+        llvm_ctx: &'ctx Context,
+        id: Spanned<TypeID>,
+    ) -> Result<&Metatype<'ctx>, CompileError> {
         if self.metatypes.contains_key(&id.clone()) {
-            self.get(id)
+            self.get_err(id)
         } else {
-            self.generic_gens
-                .get(&id.base)
-                .expect(format!("Base type {} has no generic builder.", id.base).as_str())(
-                llvm_ctx,
-                self,
-                id.generics.clone(),
-            );
-            self.get(id)
+            self.generic_gens.get(&id.base).ok_or_else(|| {
+                CompileError::new(
+                    id.span,
+                    "Could not find type in the current scope.".to_string(),
+                )
+            })?(llvm_ctx, self, id.generics.clone());
+            self.get_err(id)
         }
     }
 
     pub fn get(&self, id: TypeID) -> &Metatype<'ctx> {
         self.maybe_get(id.clone())
             .expect(format!("Cannot find type {id} or it is not fully initialized.").as_str())
+    }
+
+    pub fn get_err(&self, id: Spanned<TypeID>) -> Result<&Metatype<'ctx>, CompileError> {
+        let out = self.maybe_get(id.inner.clone());
+        if out.is_some() {
+            Ok(out.unwrap())
+        } else {
+            Err(CompileError::new(
+                id.span,
+                "Could not find type in the current scope.".to_string(),
+            ))
+        }
     }
 
     pub fn maybe_get(&self, id: TypeID) -> Option<&Metatype<'ctx>> {
@@ -127,8 +144,12 @@ impl<'ctx> LanguageContext<'ctx> {
         self.types.bool.const_int(value as u64, false)
     }
 
-    pub fn get_struct_with_gen(&mut self, llvm_ctx: &'ctx Context, id: TypeID) -> StructType<'ctx> {
-        self.get_with_gen(llvm_ctx, id).obj_struct.unwrap()
+    pub fn get_struct_with_gen(
+        &mut self,
+        llvm_ctx: &'ctx Context,
+        id: Spanned<TypeID>,
+    ) -> Result<StructType<'ctx>, CompileError> {
+        Ok(self.get_with_gen(llvm_ctx, id)?.obj_struct.unwrap())
     }
 
     pub fn get_struct(&self, id: TypeID) -> StructType<'ctx> {
@@ -142,9 +163,9 @@ impl<'ctx> LanguageContext<'ctx> {
     pub fn get_storage_with_gen(
         &mut self,
         llvm_ctx: &'ctx Context,
-        id: TypeID,
-    ) -> BasicTypeEnum<'ctx> {
-        self.get_with_gen(llvm_ctx, id).storage_type
+        id: Spanned<TypeID>,
+    ) -> Result<BasicTypeEnum<'ctx>, CompileError> {
+        Ok(self.get_with_gen(llvm_ctx, id)?.storage_type)
     }
 
     pub fn is_refcounted(&self, id: TypeID) -> bool {
