@@ -10,7 +10,7 @@ use chumsky::span::{SimpleSpan, Spanned, WrappingSpan};
 use inkwell::{
     context::Context,
     module::Linkage,
-    types::{BasicType, FunctionType},
+    types::{AnyType, BasicType, FunctionType},
 };
 
 use crate::{
@@ -189,25 +189,33 @@ pub fn gen_decl<'ctx>(
                 .iter()
                 .map(|(_, t)| ctx.get(t.to_typeid()).storage_type.into())
                 .collect::<Vec<_>>();
-            let returns = if returns.is_some() {
+            let llvm_function_type = if returns.is_some() {
                 let returns = returns.clone().unwrap();
-                ctx.get_with_gen(
-                    llvm_ctx,
-                    returns.span.make_wrapped(returns.inner.to_typeid()),
-                )?
+                let returns = ctx
+                    .get_with_gen(
+                        llvm_ctx,
+                        returns.span.make_wrapped(returns.inner.to_typeid()),
+                    )?
+                    .storage_type;
+                returns.fn_type(&param_types, false)
             } else {
-                ctx.get(TypeID::from_base("Unit".to_string()))
+                llvm_ctx.void_type().fn_type(&param_types, false)
             };
-            let llvm_function_typ = returns.storage_type.fn_type(&param_types, false);
-            let llvm_function = ctx.module.add_function(&name, llvm_function_typ, None);
-            let function_typ = TypeID::new(
+            let llvm_function = ctx.module.add_function(&name, llvm_function_type, None);
+            let function_type = TypeID::new(
                 "Function".to_string(),
-                params
-                    .iter()
-                    .map(|(_, typ)| typ.inner.to_typeid())
-                    .collect(),
+                vec![
+                    TypeID::new(
+                        "Tuple".to_string(),
+                        params
+                            .iter()
+                            .map(|(_, typ)| typ.inner.to_typeid())
+                            .collect(),
+                    ),
+                    TypeID::from_base("Unit".to_string()),
+                ],
             );
-            let function = Function::from_function(llvm_ctx, ctx, llvm_function, function_typ);
+            let function = Function::from_function(llvm_ctx, ctx, llvm_function, function_type);
             ctx.add_field(
                 name.inner.clone(),
                 Field::new(ValueEnum::Function(function), name.inner.clone()),
@@ -260,6 +268,18 @@ pub fn do_codegen<'ctx>(
             Err(err) => ctx.error(err),
         }
     }
+
+    let main = ctx.get_field_nospan("main".to_string());
+    match main {
+        Some(main) => {
+            main.value
+                .clone()
+                .try_as_function()
+                .unwrap()
+                .call(ctx, vec![], "res".to_string())
+        }
+        None => panic!("Requires a main() function."),
+    };
 
     ctx.pop_scope();
 

@@ -39,6 +39,8 @@ impl<'ctx> Function<'ctx> {
         typ: TypeID,
         name: String,
     ) -> Self {
+        assert!(typ.generics.len() == 2);
+        assert!(typ.generics[0].base == "Tuple".to_string());
         Self {
             name,
             metatype: typ,
@@ -90,7 +92,7 @@ impl<'ctx> Callable<'ctx> for Function<'ctx> {
             .unwrap()
             .try_as_basic_value();
 
-        if result.is_basic() {
+        if self.returns().base != "Unit".to_string() {
             ValueEnum::from_val(
                 ctx,
                 result.expect_basic("Function return type is not a value?"),
@@ -98,7 +100,6 @@ impl<'ctx> Callable<'ctx> for Function<'ctx> {
                 format!("{}_returns", self.name),
             )
         } else {
-            assert_eq!(ctx.get(self.returns()).base, BasicBuiltin::Unit);
             ValueEnum::Unit(Unit {})
         }
     }

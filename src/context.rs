@@ -203,15 +203,21 @@ impl<'ctx> LanguageContext<'ctx> {
     }
 
     pub fn get_field(&self, name: Spanned<String>) -> Result<&Field<'ctx>, CompileError> {
+        self.get_field_nospan(name.inner.clone()).ok_or_else(|| {
+            CompileError::new(
+                name.span,
+                format!("No field named {} in current scope.", name.inner),
+            )
+        })
+    }
+
+    pub fn get_field_nospan(&self, name: String) -> Option<&Field<'ctx>> {
         for scope in self.scope.iter().rev() {
-            if scope.contains_key(&name.inner.clone()) {
-                return Ok(scope.get(&name.inner.clone()).unwrap());
+            if scope.contains_key(&name.clone()) {
+                return Some(scope.get(&name.clone()).unwrap());
             }
         }
-        Err(CompileError::new(
-            name.span,
-            format!("No field named {} in current scope.", name.inner),
-        ))
+        None
     }
 
     pub fn get_field_mut(
