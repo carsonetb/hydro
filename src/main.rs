@@ -12,7 +12,7 @@ mod types;
 mod unit;
 mod value;
 
-use std::{error::Error, path::Path};
+use std::{error::Error, path::Path, process::exit};
 
 use inkwell::{
     context::Context,
@@ -23,7 +23,10 @@ use crate::{codegen::do_codegen, compile::execute_jit, context::LanguageContext,
 
 fn main() -> Result<(), Box<dyn Error>> {
     let path = Path::new("examples/test.hy").to_path_buf();
-    let program = parse(path.clone()).expect("Failed to parse program.");
+    let program = match parse(path.clone()) {
+        Some(program) => program,
+        None => exit(0),
+    };
 
     Target::initialize_native(&InitializationConfig::default())
         .expect("Failed to initialize native machine target!");

@@ -139,6 +139,7 @@ pub fn type_parser<'src>() -> impl Parser<'src, &'src str, ParserType, extra::Er
                 }
                 None => ParserType::from_base(base),
             })
+            .labelled("type")
     })
 }
 
@@ -344,7 +345,7 @@ pub fn stmt<'src>() -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'src, 
             .map(|_| Stmt::Error(ErrorKind::Unknown)),
     );
 
-    choice((var_decl(), set, just_expr, ret))
+    choice((var_decl(), ret, set, just_expr))
         .recover_with(recovery)
         .labelled("statement")
         .boxed()

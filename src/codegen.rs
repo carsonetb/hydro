@@ -301,10 +301,17 @@ pub fn gen_decl<'ctx>(
                 match gen_stmt(ctx, &stmt.inner)? {
                     Some(ret) => {
                         if ret.get_type(ctx) != returns {
-                            return Err(CompileError::new(
+                            let mut out = CompileError::new(
                                 stmt.span,
                                 format!("Incorrect return type, expected `{}`", returns),
-                            ));
+                            );
+                            if returns_spanned.is_some() {
+                                out.0.push((
+                                    returns_spanned.as_ref().unwrap().span,
+                                    "Return type specified here.".to_string(),
+                                ));
+                            }
+                            return Err(out);
                         }
                         let ret_value: Option<&dyn BasicValue<'ctx>> =
                             if ret.clone().try_as_unit().is_none() {

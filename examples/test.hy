@@ -6,5 +6,5 @@ fn main {
 
 
 fn test(x: Int) -> Int {
-    return 1 + x;
+    return x + 1;
 }
