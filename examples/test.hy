@@ -1,7 +1,7 @@
 
 
 fn main {
-    var x = 1 == 1 || 2 > test(1);
+    var x = 1 == 1 || 2 > test(1.test());
 }
 
 

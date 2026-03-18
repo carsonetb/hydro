@@ -103,6 +103,7 @@ pub fn gen_primary<'ctx>(
             }
             Ok(on_eval.call(ctx, args_eval, into_name))
         }
+        Primary::Member { on, name } => todo!(),
     }
 }
 

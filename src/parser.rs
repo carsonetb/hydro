@@ -5,7 +5,7 @@ use std::{
 };
 
 use ariadne::{Color, Label, Report, ReportKind, Source};
-use chumsky::{extra::Err, prelude::*, span::WrappingSpan};
+use chumsky::{extra::Err, prelude::*, span::WrappingSpan, text::ascii::ident};
 
 use crate::types::TypeID;
 
@@ -61,6 +61,10 @@ pub enum Primary {
         on: Spanned<Box<Primary>>,
         generics: Vec<ParserType>,
         args: Vec<Spanned<Expr>>,
+    },
+    Member {
+        on: Spanned<Box<Primary>>,
+        name: Spanned<String>,
     },
 }
 
@@ -212,6 +216,17 @@ pub fn primary<'src>(
                             None => vec![],
                         },
                         args: stuff.inner.1,
+                    }))
+            },
+        )
+        .foldl(
+            just(".").ignore_then(ident().spanned()).repeated(),
+            |on, ident| {
+                on.span
+                    .union(ident.span)
+                    .make_wrapped(Box::new(Primary::Member {
+                        on,
+                        name: ident.span.make_wrapped(ident.inner.to_string()),
                     }))
             },
         )
