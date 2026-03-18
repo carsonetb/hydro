@@ -27,13 +27,14 @@ pub enum Decl {
         generics: Vec<GenericParam>,
         params: Vec<(Spanned<String>, ParserType)>,
         returns: Option<ParserType>,
-        body: Vec<Spanned<Stmt>>,
+        body: Spanned<Vec<Spanned<Stmt>>>,
     },
 }
 
 #[derive(Debug)]
 pub enum Stmt {
     Error(ErrorKind),
+    Return(Option<Spanned<Box<Expr>>>),
     VarDecl {
         name: Spanned<String>,
         typ: Option<ParserType>,
@@ -323,6 +324,18 @@ pub fn stmt<'src>() -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'src, 
         })
         .boxed();
 
+    let ret = text::keyword("return")
+        .ignore_then(expr().or_not())
+        .then_ignore(just(";").padded())
+        .map(|expr| match expr {
+            Some(expr) => Stmt::Return(Some(expr.span.make_wrapped(Box::new(expr.inner)))),
+            None => Stmt::Return(None),
+        });
+
+    let just_expr = expr()
+        .then_ignore(just(";").padded())
+        .map(|expression| Stmt::Expr(expression.span.make_wrapped(Box::new(expression.inner))));
+
     let recovery = via_parser(
         none_of(";}")
             .repeated()
@@ -331,11 +344,7 @@ pub fn stmt<'src>() -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'src, 
             .map(|_| Stmt::Error(ErrorKind::Unknown)),
     );
 
-    var_decl()
-        .or(set)
-        .or(expr()
-            .then_ignore(just(";").padded())
-            .map(|expression| Stmt::Expr(expression.span.make_wrapped(Box::new(expression.inner)))))
+    choice((var_decl(), set, just_expr, ret))
         .recover_with(recovery)
         .labelled("statement")
         .boxed()
@@ -367,7 +376,7 @@ pub fn decl<'src>() -> impl Parser<'src, &'src str, Decl, extra::Err<Rich<'src, 
                 .or_not(),
         )
         .then(just("->").padded().ignore_then(type_parser()).or_not())
-        .then(block())
+        .then(block().spanned())
         .map(|(((name, params), returns), body)| Decl::Function {
             name: name.span.make_wrapped(name.inner.to_string()),
             generics: vec![],

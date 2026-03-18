@@ -2,7 +2,7 @@ use chumsky::span::Spanned;
 use inkwell::{
     IntPredicate,
     context::Context,
-    types::{BasicMetadataTypeEnum, BasicTypeEnum},
+    types::{AnyTypeEnum, BasicMetadataTypeEnum, BasicTypeEnum},
     values::{AnyValue, BasicValueEnum, FunctionValue, IntValue},
 };
 
@@ -156,7 +156,7 @@ impl<'ctx> ValueStatic<'ctx> for Bool<'ctx> {
             BasicBuiltin::Bool,
             typeid.clone(),
             None,
-            BasicTypeEnum::IntType(ctx.types.bool),
+            AnyTypeEnum::IntType(ctx.types.bool),
             false,
         );
 

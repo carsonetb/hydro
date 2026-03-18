@@ -9,7 +9,7 @@ use crate::{
     codegen::CompileError,
     context::LanguageContext,
     types::{BasicBuiltin, MetatypeBuilder, TypeID},
-    value::{Copyable, Field, Value, ValueEnum, ValueStatic},
+    value::{Copyable, Field, Value, ValueEnum, ValueStatic, any_to_basic},
 };
 
 #[derive(Clone, Debug)]
@@ -99,7 +99,7 @@ impl<'ctx> ValueStatic<'ctx> for Tuple<'ctx> {
             BasicBuiltin::Function,
             TypeID::from_base("Function".to_string()),
             Some(obj_struct),
-            BasicTypeEnum::PointerType(ctx.types.ptr),
+            AnyTypeEnum::PointerType(ctx.types.ptr),
             false,
         );
         builder.build(llvm_ctx, ctx, generics);

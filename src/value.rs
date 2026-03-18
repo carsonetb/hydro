@@ -2,7 +2,7 @@ use chumsky::span::Spanned;
 use enum_dispatch::enum_dispatch;
 use inkwell::{
     context::Context,
-    types::AnyTypeEnum,
+    types::{AnyTypeEnum, BasicType, BasicTypeEnum},
     values::{AnyValue, BasicValueEnum, PointerValue},
 };
 use strum_macros::EnumTryAs;
@@ -47,6 +47,18 @@ impl<'ctx> Field<'ctx> {
     pub fn release(&self, ctx: &LanguageContext<'ctx>) {
         assert_eq!(self.is_return, false);
         // TODO: Release current value.
+    }
+}
+
+pub fn any_to_basic<'ctx>(any: AnyTypeEnum<'ctx>) -> Option<BasicTypeEnum<'ctx>> {
+    match any {
+        AnyTypeEnum::ArrayType(t) => Some(t.as_basic_type_enum()),
+        AnyTypeEnum::FloatType(t) => Some(t.as_basic_type_enum()),
+        AnyTypeEnum::IntType(t) => Some(t.as_basic_type_enum()),
+        AnyTypeEnum::PointerType(t) => Some(t.as_basic_type_enum()),
+        AnyTypeEnum::StructType(t) => Some(t.as_basic_type_enum()),
+        AnyTypeEnum::VectorType(t) => Some(t.as_basic_type_enum()),
+        _ => None, // VoidType, FunctionType, LabelType, MetadataType, etc.
     }
 }
 

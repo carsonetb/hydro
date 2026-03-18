@@ -10,7 +10,7 @@ use inkwell::{
 use crate::{
     codegen::CompileError,
     context::LanguageContext,
-    value::{Field, Value, ValueEnum, ValueStatic},
+    value::{Field, Value, ValueEnum, ValueStatic, any_to_basic},
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -77,7 +77,7 @@ pub struct Metatype<'ctx> {
     static_ptr: PointerValue<'ctx>,
     pub static_struct: StructType<'ctx>,
     pub obj_struct: Option<StructType<'ctx>>,
-    pub storage_type: BasicTypeEnum<'ctx>,
+    pub storage_type: AnyTypeEnum<'ctx>,
     pub is_refcounted: bool,
     pub initializer: Option<FunctionValue<'ctx>>,
 }
@@ -146,7 +146,7 @@ impl<'ctx> ValueStatic<'ctx> for Metatype<'ctx> {
             BasicBuiltin::Type,
             TypeID::from_base("Type".to_string()),
             Some(ctx.types.type_struct),
-            BasicTypeEnum::PointerType(ctx.types.ptr),
+            AnyTypeEnum::VoidType(ctx.types.void),
             false,
         );
         builder.build(llvm_ctx, ctx, generics)
@@ -169,7 +169,7 @@ pub struct MetatypeBuilder<'ctx> {
     base: BasicBuiltin,
     name: String,
     obj_struct: Option<StructType<'ctx>>,
-    storage_type: BasicTypeEnum<'ctx>,
+    storage_type: AnyTypeEnum<'ctx>,
     static_values: Vec<BuilderStaticRepr<'ctx>>,
     is_refcounted: bool,
     inherits: Vec<TypeID>,
@@ -182,7 +182,7 @@ impl<'ctx> MetatypeBuilder<'ctx> {
         base: BasicBuiltin,
         id: TypeID,
         obj_struct: Option<StructType<'ctx>>,
-        storage_type: BasicTypeEnum<'ctx>,
+        storage_type: AnyTypeEnum<'ctx>,
         is_refcounted: bool,
     ) -> Self {
         ctx.reserve_metatype(id.clone());
@@ -227,9 +227,12 @@ impl<'ctx> MetatypeBuilder<'ctx> {
             .static_values
             .iter()
             .map(|v| {
-                ctx.get_storage_with_gen(
-                    llvm_ctx,
-                    SimpleSpan::new((), 0..0).make_wrapped(v.val.get_type(ctx)),
+                any_to_basic(
+                    ctx.get_storage_with_gen(
+                        llvm_ctx,
+                        SimpleSpan::new((), 0..0).make_wrapped(v.val.get_type(ctx)),
+                    )
+                    .unwrap(),
                 )
                 .unwrap()
             })

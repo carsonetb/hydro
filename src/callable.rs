@@ -151,7 +151,7 @@ impl<'ctx> ValueStatic<'ctx> for Function<'ctx> {
             BasicBuiltin::Function,
             TypeID::new("Function".to_string(), generics.clone()),
             None,
-            BasicTypeEnum::PointerType(ctx.types.ptr),
+            AnyTypeEnum::PointerType(ctx.types.ptr),
             false,
         );
         builder.build(llvm_ctx, ctx, generics);

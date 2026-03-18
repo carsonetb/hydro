@@ -176,7 +176,7 @@ impl<'ctx> ValueStatic<'ctx> for Int<'ctx> {
             BasicBuiltin::Int,
             typeid.clone(),
             None,
-            BasicTypeEnum::IntType(ctx.types.int),
+            AnyTypeEnum::IntType(ctx.types.int),
             false,
         );
 

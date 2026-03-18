@@ -8,8 +8,8 @@ use inkwell::{
     module::Module,
     targets::{CodeModel, RelocMode, Target, TargetMachine},
     types::{
-        BasicMetadataTypeEnum, BasicTypeEnum, FloatType, FunctionType, IntType, PointerType,
-        StructType, VoidType,
+        AnyTypeEnum, BasicMetadataTypeEnum, BasicTypeEnum, FloatType, FunctionType, IntType,
+        PointerType, StructType, VoidType,
     },
     values::IntValue,
 };
@@ -22,7 +22,7 @@ use crate::{
     tuple::Tuple,
     types::{Metatype, TypeID},
     unit::Unit,
-    value::{Field, ValueStatic},
+    value::{Field, ValueStatic, any_to_basic},
 };
 
 pub type ScopeItem<'ctx> = HashMap<String, Field<'ctx>>;
@@ -157,14 +157,14 @@ impl<'ctx> LanguageContext<'ctx> {
     }
 
     pub fn get_storage(&self, id: TypeID) -> BasicTypeEnum<'ctx> {
-        self.get(id).storage_type
+        any_to_basic(self.get(id).storage_type).unwrap()
     }
 
     pub fn get_storage_with_gen(
         &mut self,
         llvm_ctx: &'ctx Context,
         id: Spanned<TypeID>,
-    ) -> Result<BasicTypeEnum<'ctx>, CompileError> {
+    ) -> Result<AnyTypeEnum<'ctx>, CompileError> {
         Ok(self.get_with_gen(llvm_ctx, id)?.storage_type)
     }
 

@@ -43,7 +43,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     ctx.builder.build_return(Some(&ctx.int(0))).unwrap();
 
     main_val.verify(true);
-    ctx.module.verify();
+    ctx.module.verify(); //.unwrap();
     ctx.module.print_to_stderr();
 
     execute_jit(&ctx);

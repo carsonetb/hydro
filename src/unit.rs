@@ -45,7 +45,7 @@ impl<'ctx> ValueStatic<'ctx> for Unit {
             BasicBuiltin::Unit,
             TypeID::from_base("Unit".to_string()),
             None,
-            BasicTypeEnum::PointerType(ctx.types.ptr),
+            AnyTypeEnum::PointerType(ctx.types.ptr),
             false,
         );
         builder.build(llvm_ctx, ctx, generics);

@@ -11,6 +11,7 @@ use inkwell::{
     context::Context,
     module::Linkage,
     types::{AnyType, BasicType, FunctionType},
+    values::BasicValue,
 };
 
 use crate::{
@@ -20,7 +21,8 @@ use crate::{
     int::Int,
     parser::{Atom, Decl, Expr, ParseLiteral, Primary, Program, Stmt},
     types::{Metatype, TypeID},
-    value::{Field, Literal, Value, ValueEnum},
+    unit::Unit,
+    value::{Field, Literal, Value, ValueEnum, any_to_basic},
 };
 
 #[derive(Debug, Clone)]
@@ -143,7 +145,10 @@ pub fn gen_expr<'ctx>(
     }
 }
 
-pub fn gen_stmt(ctx: &mut LanguageContext, stmt: &Stmt) -> Result<(), CompileError> {
+pub fn gen_stmt<'ctx>(
+    ctx: &mut LanguageContext<'ctx>,
+    stmt: &Stmt,
+) -> Result<Option<ValueEnum<'ctx>>, CompileError> {
     match stmt {
         Stmt::Error(_) => panic!(),
         Stmt::VarDecl { name, typ, value } => {
@@ -169,18 +174,22 @@ pub fn gen_stmt(ctx: &mut LanguageContext, stmt: &Stmt) -> Result<(), CompileErr
             }
             let field = Field::new(eval, name.inner.clone());
             ctx.add_field(name.inner.clone(), field);
-            Ok(())
+            Ok(None)
         }
         Stmt::VarSet { name, value } => {
             let expr = gen_expr(ctx, value.as_ref(), name.inner.clone())?;
             let field = ctx.get_field(name.clone())?;
             field.release(ctx);
             ctx.get_field_mut(name.clone())?.value = expr;
-            Ok(())
+            Ok(None)
         }
         Stmt::Expr(expr) => match gen_expr(ctx, expr.as_ref(), "UNUSED".to_string()) {
-            Ok(_) => Ok(()),
+            Ok(_) => Ok(None),
             Err(err) => Err(err),
+        },
+        Stmt::Return(expr) => match expr {
+            Some(expr) => gen_expr(ctx, expr, "RETURN".to_string()).map(|val| Some(val)),
+            None => Ok(Some(ValueEnum::Unit(Unit {}))),
         },
     }
 }
@@ -210,13 +219,19 @@ pub fn gen_decl_pre<'ctx>(
             }
             let param_types = params
                 .iter()
-                .map(|(_, t)| ctx.get(t.to_typeid()).storage_type.into())
+                .map(|(_, t)| {
+                    any_to_basic(ctx.get(t.to_typeid()).storage_type)
+                        .unwrap()
+                        .into()
+                })
                 .collect::<Vec<_>>();
             let llvm_function_type = if returns.is_some() {
                 let returns = returns.clone().unwrap();
-                let returns = ctx
-                    .get_with_gen(llvm_ctx, returns.span.make_wrapped(returns.to_typeid()))?
-                    .storage_type;
+                let returns = any_to_basic(
+                    ctx.get_with_gen(llvm_ctx, returns.span.make_wrapped(returns.to_typeid()))?
+                        .storage_type,
+                )
+                .unwrap();
                 returns.fn_type(&param_types, false)
             } else {
                 llvm_ctx.void_type().fn_type(&param_types, false)
@@ -231,7 +246,11 @@ pub fn gen_decl_pre<'ctx>(
                         "Tuple".to_string(),
                         params.iter().map(|(_, typ)| typ.to_typeid()).collect(),
                     ),
-                    TypeID::from_base("Unit".to_string()),
+                    if returns.is_some() {
+                        returns.as_ref().unwrap().to_typeid()
+                    } else {
+                        TypeID::from_base("Unit".to_string())
+                    },
                 ],
             );
             let function = Function::from_function(llvm_ctx, ctx, llvm_function, function_type);
@@ -258,6 +277,12 @@ pub fn gen_decl<'ctx>(
             returns,
             body,
         } => {
+            let returns_spanned = returns;
+            let returns = match returns {
+                Some(returns) => returns.to_typeid(),
+                None => TypeID::from_base("Unit".to_string()),
+            };
+
             let name = name.span.make_wrapped(format!("User__{}", name.inner));
             let function = ctx.module.get_function(name.as_str()).unwrap();
             let prev = ctx.builder.get_insert_block().unwrap();
@@ -271,11 +296,41 @@ pub fn gen_decl<'ctx>(
                 ctx.add_field(name.inner.clone(), Field::new(value, name.inner.clone()));
             }
 
-            for stmt in body {
-                gen_stmt(ctx, stmt)?
+            let mut returned = false;
+            for stmt in body.inner.iter() {
+                match gen_stmt(ctx, &stmt.inner)? {
+                    Some(ret) => {
+                        if ret.get_type(ctx) != returns {
+                            return Err(CompileError::new(
+                                stmt.span,
+                                format!("Incorrect return type, expected `{}`", returns),
+                            ));
+                        }
+                        let ret_value: Option<&dyn BasicValue<'ctx>> =
+                            if ret.clone().try_as_unit().is_none() {
+                                Some(&ret.get_value())
+                            } else {
+                                None
+                            };
+                        ctx.builder.build_return(ret_value);
+                        returned = true;
+                        break;
+                    }
+                    None => continue,
+                }
             }
 
-            ctx.builder.build_return(None);
+            if !returned {
+                if returns != TypeID::from_base("Unit".to_string()) {
+                    return Err(CompileError::with_notes(
+                        body.span,
+                        "Function does not always return.".to_string(),
+                        returns_spanned.as_ref().unwrap().span,
+                        "Return type specified here.".to_string(),
+                    ));
+                }
+                ctx.builder.build_return(None);
+            }
             ctx.pop_scope();
             ctx.builder.position_at_end(prev);
 
