@@ -198,7 +198,6 @@ pub fn gen_decl_pre<'ctx>(
             returns,
             body,
         } => {
-            let name = name.span.make_wrapped(format!("User__{}", name.inner));
             let scope = ctx.current_scope();
             if scope.contains_key(&name.inner) {
                 return Err(CompileError::new(
@@ -222,7 +221,9 @@ pub fn gen_decl_pre<'ctx>(
             } else {
                 llvm_ctx.void_type().fn_type(&param_types, false)
             };
-            let llvm_function = ctx.module.add_function(&name, llvm_function_type, None);
+            let llvm_function =
+                ctx.module
+                    .add_function(&format!("User__{}", name.inner), llvm_function_type, None);
             let function_type = TypeID::new(
                 "Function".to_string(),
                 vec![
@@ -265,6 +266,7 @@ pub fn gen_decl<'ctx>(
             ctx.push_scope();
 
             for ((name, typ), value) in params.iter().zip(function.get_params()) {
+                value.set_name(&name.inner);
                 let value = ValueEnum::from_val(ctx, value, typ.to_typeid(), name.inner.clone());
                 ctx.add_field(name.inner.clone(), Field::new(value, name.inner.clone()));
             }
