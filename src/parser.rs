@@ -5,11 +5,11 @@ use std::{
 };
 
 use ariadne::{Color, Label, Report, ReportKind, Source};
-use chumsky::{prelude::*, span::WrappingSpan};
+use chumsky::{extra::Err, prelude::*, span::WrappingSpan};
 
 use crate::types::TypeID;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ErrorKind {
     UnexpectedText(String),
     Unknown,
@@ -46,25 +46,30 @@ pub enum Stmt {
     Expr(Spanned<Box<Expr>>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expr {
     Unary(Spanned<String>, Box<Expr>),
     Binary(Spanned<Box<Expr>>, Spanned<String>, Spanned<Box<Expr>>),
     Primary(Spanned<Box<Primary>>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Primary {
     Atom(Spanned<Box<Atom>>),
+    Call {
+        on: Spanned<Box<Primary>>,
+        generics: Vec<ParserType>,
+        args: Vec<Spanned<Expr>>,
+    },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Atom {
     Literal(Spanned<ParseLiteral>),
     Grouping(Spanned<Expr>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ParseLiteral {
     Error(ErrorKind),
     Int(u32),
@@ -73,6 +78,7 @@ pub enum ParseLiteral {
 
 #[derive(Debug, Clone)]
 pub struct ParserType {
+    pub span: SimpleSpan,
     pub base: Spanned<String>,
     pub generics: Vec<Spanned<ParserType>>,
 }
@@ -92,38 +98,49 @@ impl ParserType {
         )
     }
 
-    pub fn new(base: Spanned<String>, generics: Vec<Spanned<ParserType>>) -> Self {
-        Self { base, generics }
+    pub fn new(
+        span: SimpleSpan,
+        base: Spanned<String>,
+        generics: Vec<Spanned<ParserType>>,
+    ) -> Self {
+        Self {
+            span,
+            base,
+            generics,
+        }
     }
 
     pub fn from_base(base: Spanned<String>) -> Self {
         Self {
+            span: base.span,
             base,
             generics: Vec::<Spanned<ParserType>>::new(),
         }
     }
 }
 
-pub fn type_parser<'src>()
--> impl Parser<'src, &'src str, Spanned<ParserType>, extra::Err<Rich<'src, char>>> {
+pub fn type_parser<'src>() -> impl Parser<'src, &'src str, ParserType, extra::Err<Rich<'src, char>>>
+{
     recursive(|typ| {
         let ident = text::ascii::ident()
             .spanned()
             .map(|name: Spanned<&str>| name.span.make_wrapped(name.inner.to_string()));
 
-        let args = typ
-            .separated_by(just(','))
-            .collect::<Vec<_>>()
-            .delimited_by(just('<'), just('>'));
+        let args: Boxed<'_, '_, &str, Spanned<Vec<Spanned<ParserType>>>, Err<Rich<'src, char>>> =
+            typ.separated_by(just(','))
+                .collect::<Vec<Spanned<ParserType>>>()
+                .delimited_by(just('<'), just('>'))
+                .spanned()
+                .boxed();
 
         ident
             .then(args.or_not())
             .map(|(base, generics)| match generics {
-                Some(generics) => ParserType::new(base, generics),
+                Some(generics) => {
+                    ParserType::new(base.span.union(generics.span), base, generics.inner)
+                }
                 None => ParserType::from_base(base),
             })
-            .spanned()
-            .boxed()
     })
 }
 
@@ -157,9 +174,38 @@ pub fn atom<'src>(
 }
 
 pub fn primary<'src>(
-    expr: impl Parser<'src, &'src str, Spanned<Expr>, extra::Err<Rich<'src, char>>>,
+    expr: impl Parser<'src, &'src str, Spanned<Expr>, extra::Err<Rich<'src, char>>> + Clone + 'src,
 ) -> impl Parser<'src, &'src str, Spanned<Box<Primary>>, extra::Err<Rich<'src, char>>> {
-    atom(expr).map(|atom| atom.span.make_wrapped(Box::new(Primary::Atom(atom))))
+    recursive(|primary| {
+        let atom = atom(expr.clone())
+            .map(|atom| atom.span.make_wrapped(Box::new(Primary::Atom(atom))))
+            .boxed();
+
+        let call = primary
+            .then(
+                type_parser()
+                    .separated_by(just(","))
+                    .collect::<Vec<_>>()
+                    .delimited_by(just("<"), just(">"))
+                    .or_not(),
+            )
+            .then(
+                expr.clone()
+                    .separated_by(just(","))
+                    .collect::<Vec<_>>()
+                    .delimited_by(just("("), just(")")),
+            )
+            .map(|((on, generics), args)| Primary::Call {
+                on,
+                generics: match generics {
+                    Some(generics) => generics,
+                    None => vec![],
+                },
+                args,
+            });
+
+        atom
+    })
 }
 
 pub fn expr<'src>() -> impl Parser<'src, &'src str, Spanned<Expr>, extra::Err<Rich<'src, char>>> {
