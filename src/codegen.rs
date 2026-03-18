@@ -66,31 +66,54 @@ pub fn gen_literal<'ctx>(ctx: &LanguageContext<'ctx>, literal: &ParseLiteral) ->
 pub fn gen_atom<'ctx>(
     ctx: &LanguageContext<'ctx>,
     atom: &Atom,
+    into_name: String,
 ) -> Result<ValueEnum<'ctx>, CompileError> {
     match atom {
         Atom::Literal(literal) => Ok(gen_literal(ctx, literal)),
-        Atom::Grouping(expr) => gen_expr(ctx, expr),
+        Atom::Grouping(expr) => gen_expr(ctx, expr, into_name),
+        Atom::Var(name) => ctx.get_field(name.clone()).map(|val| val.value.clone()),
     }
 }
 
 pub fn gen_primary<'ctx>(
     ctx: &LanguageContext<'ctx>,
     prim: &Primary,
+    into_name: String,
 ) -> Result<ValueEnum<'ctx>, CompileError> {
     match prim {
-        Primary::Atom(atom) => gen_atom(ctx, atom),
+        Primary::Atom(atom) => gen_atom(ctx, atom, into_name),
+        Primary::Call { on, generics, args } => {
+            let on_eval = gen_primary(ctx, on, format!("{}_callee", into_name))?;
+            let on_typ = on_eval.get_type(ctx);
+            let on_eval = on_eval.try_as_function().ok_or_else(|| {
+                CompileError::new(
+                    on.span,
+                    format!("Expression does not evaluate to a Function type, instead it is of type `{}`", on_typ),
+                )
+            })?;
+            let mut args_eval = Vec::<ValueEnum<'ctx>>::new();
+            for (i, arg) in args.iter().enumerate() {
+                args_eval.push(gen_expr(
+                    ctx,
+                    arg,
+                    format!("{}_callee_arg{}", into_name, i),
+                )?);
+            }
+            Ok(on_eval.call(ctx, args_eval, into_name))
+        }
     }
 }
 
 pub fn gen_expr<'ctx>(
     ctx: &LanguageContext<'ctx>,
     expr: &Expr,
+    into_name: String,
 ) -> Result<ValueEnum<'ctx>, CompileError> {
     match expr {
         Expr::Unary(op, right) => todo!(),
         Expr::Binary(left, op, right) => {
-            let left_val = gen_expr(ctx, left)?;
-            let right_val = gen_expr(ctx, right)?;
+            let left_val = gen_expr(ctx, left, format!("{}_left", into_name))?;
+            let right_val = gen_expr(ctx, right, format!("{}_right", into_name))?;
             let left_type = left_val.get_type(ctx);
             let right_type = right_val.get_type(ctx);
             if left_type != right_type {
@@ -116,7 +139,7 @@ pub fn gen_expr<'ctx>(
             op_fn.verify(vec![left_type, right_type]);
             Ok(op_fn.call(ctx, vec![left_val, right_val], "binary".to_string()))
         }
-        Expr::Primary(primary) => gen_primary(ctx, primary),
+        Expr::Primary(primary) => gen_primary(ctx, primary, into_name),
     }
 }
 
@@ -124,13 +147,13 @@ pub fn gen_stmt(ctx: &mut LanguageContext, stmt: &Stmt) -> Result<(), CompileErr
     match stmt {
         Stmt::Error(_) => panic!(),
         Stmt::VarDecl { name, typ, value } => {
-            let eval = gen_expr(ctx, value.as_ref());
+            let eval = gen_expr(ctx, value.as_ref(), name.inner.clone());
             if eval.is_err() {
                 return Err(eval.unwrap_err());
             }
             let eval = eval.unwrap();
             let eval_type = eval.get_type(ctx).name();
-            if typ.is_some() && eval_type != typ.as_ref().unwrap().inner.to_typeid().name() {
+            if typ.is_some() && eval_type != typ.as_ref().unwrap().to_typeid().name() {
                 return Err(CompileError::with_notes(
                     value.span,
                     format!(
@@ -149,13 +172,13 @@ pub fn gen_stmt(ctx: &mut LanguageContext, stmt: &Stmt) -> Result<(), CompileErr
             Ok(())
         }
         Stmt::VarSet { name, value } => {
-            let expr = gen_expr(ctx, value.as_ref())?;
+            let expr = gen_expr(ctx, value.as_ref(), name.inner.clone())?;
             let field = ctx.get_field(name.clone())?;
             field.release(ctx);
             ctx.get_field_mut(name.clone())?.value = expr;
             Ok(())
         }
-        Stmt::Expr(expr) => match gen_expr(ctx, expr.as_ref()) {
+        Stmt::Expr(expr) => match gen_expr(ctx, expr.as_ref(), "UNUSED".to_string()) {
             Ok(_) => Ok(()),
             Err(err) => Err(err),
         },
@@ -183,7 +206,7 @@ pub fn gen_decl<'ctx>(
                 ));
             }
             for (name, typ) in params {
-                ctx.get_with_gen(llvm_ctx, typ.span.make_wrapped(typ.inner.to_typeid()))?;
+                ctx.get_with_gen(llvm_ctx, typ.span.make_wrapped(typ.to_typeid()))?;
             }
             let param_types = params
                 .iter()
@@ -192,10 +215,7 @@ pub fn gen_decl<'ctx>(
             let llvm_function_type = if returns.is_some() {
                 let returns = returns.clone().unwrap();
                 let returns = ctx
-                    .get_with_gen(
-                        llvm_ctx,
-                        returns.span.make_wrapped(returns.inner.to_typeid()),
-                    )?
+                    .get_with_gen(llvm_ctx, returns.span.make_wrapped(returns.to_typeid()))?
                     .storage_type;
                 returns.fn_type(&param_types, false)
             } else {
@@ -207,10 +227,7 @@ pub fn gen_decl<'ctx>(
                 vec![
                     TypeID::new(
                         "Tuple".to_string(),
-                        params
-                            .iter()
-                            .map(|(_, typ)| typ.inner.to_typeid())
-                            .collect(),
+                        params.iter().map(|(_, typ)| typ.to_typeid()).collect(),
                     ),
                     TypeID::from_base("Unit".to_string()),
                 ],

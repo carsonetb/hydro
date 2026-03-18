@@ -25,8 +25,8 @@ pub enum Decl {
     Function {
         name: Spanned<String>,
         generics: Vec<GenericParam>,
-        params: Vec<(Spanned<String>, Spanned<ParserType>)>,
-        returns: Option<Spanned<ParserType>>,
+        params: Vec<(Spanned<String>, ParserType)>,
+        returns: Option<ParserType>,
         body: Vec<Spanned<Stmt>>,
     },
 }
@@ -36,7 +36,7 @@ pub enum Stmt {
     Error(ErrorKind),
     VarDecl {
         name: Spanned<String>,
-        typ: Option<Spanned<ParserType>>,
+        typ: Option<ParserType>,
         value: Spanned<Box<Expr>>,
     },
     VarSet {
@@ -67,6 +67,7 @@ pub enum Primary {
 pub enum Atom {
     Literal(Spanned<ParseLiteral>),
     Grouping(Spanned<Expr>),
+    Var(Spanned<String>),
 }
 
 #[derive(Debug, Clone)]
@@ -80,7 +81,7 @@ pub enum ParseLiteral {
 pub struct ParserType {
     pub span: SimpleSpan,
     pub base: Spanned<String>,
-    pub generics: Vec<Spanned<ParserType>>,
+    pub generics: Vec<ParserType>,
 }
 
 #[derive(Debug)]
@@ -94,15 +95,11 @@ impl ParserType {
     pub fn to_typeid(&self) -> TypeID {
         TypeID::new(
             self.base.inner.clone(),
-            self.generics.iter().map(|g| g.inner.to_typeid()).collect(),
+            self.generics.iter().map(|g| g.to_typeid()).collect(),
         )
     }
 
-    pub fn new(
-        span: SimpleSpan,
-        base: Spanned<String>,
-        generics: Vec<Spanned<ParserType>>,
-    ) -> Self {
+    pub fn new(span: SimpleSpan, base: Spanned<String>, generics: Vec<ParserType>) -> Self {
         Self {
             span,
             base,
@@ -114,7 +111,7 @@ impl ParserType {
         Self {
             span: base.span,
             base,
-            generics: Vec::<Spanned<ParserType>>::new(),
+            generics: Vec::<ParserType>::new(),
         }
     }
 }
@@ -126,12 +123,12 @@ pub fn type_parser<'src>() -> impl Parser<'src, &'src str, ParserType, extra::Er
             .spanned()
             .map(|name: Spanned<&str>| name.span.make_wrapped(name.inner.to_string()));
 
-        let args: Boxed<'_, '_, &str, Spanned<Vec<Spanned<ParserType>>>, Err<Rich<'src, char>>> =
-            typ.separated_by(just(','))
-                .collect::<Vec<Spanned<ParserType>>>()
-                .delimited_by(just('<'), just('>'))
-                .spanned()
-                .boxed();
+        let args: Boxed<'_, '_, &str, Spanned<Vec<ParserType>>, Err<Rich<'src, char>>> = typ
+            .separated_by(just(','))
+            .collect::<Vec<_>>()
+            .delimited_by(just('<'), just('>'))
+            .spanned()
+            .boxed();
 
         ident
             .then(args.or_not())
@@ -171,6 +168,14 @@ pub fn atom<'src>(
             .delimited_by(just("("), just(")"))
             .spanned()
             .map(|e| e.span.make_wrapped(Box::new(Atom::Grouping(e.inner)))))
+        .or(text::ascii::ident()
+            .spanned()
+            .padded()
+            .map(|keyword: Spanned<&str>| {
+                keyword.span.make_wrapped(Box::new(Atom::Var(
+                    keyword.span.make_wrapped(keyword.inner.to_string()),
+                )))
+            }))
 }
 
 pub fn primary<'src>(
@@ -181,30 +186,34 @@ pub fn primary<'src>(
             .map(|atom| atom.span.make_wrapped(Box::new(Primary::Atom(atom))))
             .boxed();
 
-        let call = primary
-            .then(
-                type_parser()
-                    .separated_by(just(","))
-                    .collect::<Vec<_>>()
-                    .delimited_by(just("<"), just(">"))
-                    .or_not(),
-            )
-            .then(
-                expr.clone()
-                    .separated_by(just(","))
-                    .collect::<Vec<_>>()
-                    .delimited_by(just("("), just(")")),
-            )
-            .map(|((on, generics), args)| Primary::Call {
-                on,
-                generics: match generics {
-                    Some(generics) => generics,
-                    None => vec![],
-                },
-                args,
-            });
-
-        atom
+        atom.foldl(
+            type_parser()
+                .separated_by(just(","))
+                .collect::<Vec<_>>()
+                .delimited_by(just("<"), just(">"))
+                .or_not()
+                .then(
+                    expr.clone()
+                        .separated_by(just(","))
+                        .collect::<Vec<_>>()
+                        .delimited_by(just("("), just(")")),
+                )
+                .spanned()
+                .repeated(),
+            |on, stuff| {
+                on.span
+                    .union(stuff.span)
+                    .make_wrapped(Box::new(Primary::Call {
+                        on,
+                        generics: match stuff.inner.0 {
+                            Some(generics) => generics,
+                            None => vec![],
+                        },
+                        args: stuff.inner.1,
+                    }))
+            },
+        )
+        .boxed()
     })
 }
 
@@ -285,6 +294,7 @@ pub fn expr<'src>() -> impl Parser<'src, &'src str, Spanned<Expr>, extra::Err<Ri
 pub fn var_decl<'src>() -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'src, char>>> {
     let ident = text::ascii::ident().spanned();
     text::ascii::keyword("var")
+        .labelled("var decl")
         .padded()
         .ignore_then(ident)
         .then(just(':').padded().ignore_then(type_parser()).or_not())
@@ -300,11 +310,13 @@ pub fn var_decl<'src>() -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'s
 }
 
 pub fn stmt<'src>() -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'src, char>>> {
-    let ident = text::ascii::ident().padded().spanned();
-    let set = ident
+    let set = text::ascii::ident()
+        .labelled("var set")
+        .padded()
+        .spanned()
         .then_ignore(just("="))
         .then(expr())
-        .then_ignore(just(";"))
+        .then_ignore(just(";").padded())
         .map(|(name, value)| Stmt::VarSet {
             name: name.span.make_wrapped(name.to_string()),
             value: value.span.make_wrapped(Box::new(value.inner)),
@@ -312,19 +324,20 @@ pub fn stmt<'src>() -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'src, 
         .boxed();
 
     let recovery = via_parser(
-        any()
-            .and_is(just(";").not())
+        none_of(";}")
             .repeated()
-            .then_ignore(just(";"))
+            .at_least(1)
+            .then_ignore(just(";").padded())
             .map(|_| Stmt::Error(ErrorKind::Unknown)),
     );
 
     var_decl()
         .or(set)
         .or(expr()
-            .then_ignore(just(";"))
+            .then_ignore(just(";").padded())
             .map(|expression| Stmt::Expr(expression.span.make_wrapped(Box::new(expression.inner)))))
         .recover_with(recovery)
+        .labelled("statement")
         .boxed()
 }
 
