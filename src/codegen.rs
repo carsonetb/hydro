@@ -137,7 +137,7 @@ pub fn gen_expr<'ctx>(
                 .try_as_function()
                 .unwrap();
             op_fn.verify(vec![left_type, right_type]);
-            Ok(op_fn.call(ctx, vec![left_val, right_val], "binary".to_string()))
+            Ok(op_fn.call(ctx, vec![left_val, right_val], into_name))
         }
         Expr::Primary(primary) => gen_primary(ctx, primary, into_name),
     }
@@ -185,7 +185,7 @@ pub fn gen_stmt(ctx: &mut LanguageContext, stmt: &Stmt) -> Result<(), CompileErr
     }
 }
 
-pub fn gen_decl<'ctx>(
+pub fn gen_decl_pre<'ctx>(
     llvm_ctx: &'ctx Context,
     ctx: &mut LanguageContext<'ctx>,
     decl: &Decl,
@@ -198,6 +198,7 @@ pub fn gen_decl<'ctx>(
             returns,
             body,
         } => {
+            let name = name.span.make_wrapped(format!("User__{}", name.inner));
             let scope = ctx.current_scope();
             if scope.contains_key(&name.inner) {
                 return Err(CompileError::new(
@@ -238,12 +239,32 @@ pub fn gen_decl<'ctx>(
                 Field::new(ValueEnum::Function(function), name.inner.clone()),
             );
 
+            Ok(())
+        }
+    }
+}
+
+pub fn gen_decl<'ctx>(
+    llvm_ctx: &'ctx Context,
+    ctx: &mut LanguageContext<'ctx>,
+    decl: &Decl,
+) -> Result<(), CompileError> {
+    match decl {
+        Decl::Function {
+            name,
+            generics,
+            params,
+            returns,
+            body,
+        } => {
+            let name = name.span.make_wrapped(format!("User__{}", name.inner));
+            let function = ctx.module.get_function(name.as_str()).unwrap();
             let prev = ctx.builder.get_insert_block().unwrap();
-            let entry = llvm_ctx.append_basic_block(llvm_function, "entry");
+            let entry = llvm_ctx.append_basic_block(function, "entry");
             ctx.builder.position_at_end(entry);
             ctx.push_scope();
 
-            for ((name, typ), value) in params.iter().zip(llvm_function.get_params()) {
+            for ((name, typ), value) in params.iter().zip(function.get_params()) {
                 let value = ValueEnum::from_val(ctx, value, typ.to_typeid(), name.inner.clone());
                 ctx.add_field(name.inner.clone(), Field::new(value, name.inner.clone()));
             }
@@ -278,6 +299,13 @@ pub fn do_codegen<'ctx>(
     file.read_to_string(&mut src).unwrap();
 
     ctx.push_scope();
+
+    for decl in program.decls.iter() {
+        match gen_decl_pre(llvm_ctx, ctx, decl) {
+            Ok(_) => continue,
+            Err(err) => ctx.error(err),
+        }
+    }
 
     for decl in program.decls.iter() {
         match gen_decl(llvm_ctx, ctx, decl) {

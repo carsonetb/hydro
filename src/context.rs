@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use chumsky::span::Spanned;
+use chumsky::span::{Spanned, WrappingSpan};
 use inkwell::{
     AddressSpace, OptimizationLevel,
     builder::Builder,
@@ -212,6 +212,7 @@ impl<'ctx> LanguageContext<'ctx> {
     }
 
     pub fn get_field_nospan(&self, name: String) -> Option<&Field<'ctx>> {
+        let name = format!("User__{}", name);
         for scope in self.scope.iter().rev() {
             if scope.contains_key(&name.clone()) {
                 return Some(scope.get(&name.clone()).unwrap());
