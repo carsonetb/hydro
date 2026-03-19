@@ -13,6 +13,7 @@ use crate::{
     codegen::CompileError,
     context::LanguageContext,
     int::Int,
+    string::Str,
     tuple::Tuple,
     types::{BasicBuiltin, Metatype, TypeID},
     unit::Unit,
@@ -68,6 +69,7 @@ pub enum ValueEnum<'ctx> {
     Unit(Unit),
     Bool(Bool<'ctx>),
     Int(Int<'ctx>),
+    String(Str<'ctx>),
     Tuple(Tuple<'ctx>),
     Function(Function<'ctx>),
 }
@@ -86,6 +88,7 @@ impl<'ctx> ValueEnum<'ctx> {
             BasicBuiltin::Int => Self::Int(Int::from_val(ctx, val, typ, name)),
             BasicBuiltin::Function => Self::Function(Function::from_val(ctx, val, typ, name)),
             BasicBuiltin::Tuple => Self::Tuple(Tuple::from_val(ctx, val, typ, name)),
+            BasicBuiltin::String => Self::String(Str::from_val(ctx, val, typ, name)),
         }
     }
 }

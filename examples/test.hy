@@ -1,7 +1,9 @@
 
 
 fn main {
-    var x = 1 == 1 || 2 > test(1.test());
+    var name = "Carson";
+    print(name);
+    var x = 1 == 1 || 2 > test(1);
 }
 
 

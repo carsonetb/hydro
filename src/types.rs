@@ -19,6 +19,7 @@ pub enum BasicBuiltin {
     Type,
     Bool,
     Int,
+    String,
     Tuple,
     Function,
 }

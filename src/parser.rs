@@ -80,6 +80,7 @@ pub enum ParseLiteral {
     Error(ErrorKind),
     Int(u32),
     Bool(bool),
+    String(String),
 }
 
 #[derive(Debug, Clone)]
@@ -121,8 +122,13 @@ impl ParserType {
     }
 }
 
-pub fn type_parser<'src>() -> impl Parser<'src, &'src str, ParserType, extra::Err<Rich<'src, char>>>
+pub trait GenericParser<'src, R>: Parser<'src, &'src str, R, extra::Err<Rich<'src, char>>> {}
+impl<'src, R, P: Parser<'src, &'src str, R, extra::Err<Rich<'src, char>>>> GenericParser<'src, R>
+    for P
 {
+}
+
+pub fn type_parser<'src>() -> impl GenericParser<'src, ParserType> {
     recursive(|typ| {
         let ident = text::ascii::ident()
             .spanned()
@@ -147,8 +153,7 @@ pub fn type_parser<'src>() -> impl Parser<'src, &'src str, ParserType, extra::Er
     })
 }
 
-pub fn literal<'src>()
--> impl Parser<'src, &'src str, Spanned<ParseLiteral>, extra::Err<Rich<'src, char>>> {
+pub fn literal<'src>() -> impl GenericParser<'src, Spanned<ParseLiteral>> {
     let int = text::int(10)
         .from_str()
         .map(|r| match r {
@@ -162,11 +167,18 @@ pub fn literal<'src>()
         .or(just("false").map(|_| ParseLiteral::Bool(false)))
         .spanned()
         .labelled("boolean");
-    int.or(bool).padded()
+    let string = none_of('"')
+        .ignored()
+        .repeated()
+        .to_slice()
+        .padded_by(just('"'))
+        .map(|string: &str| ParseLiteral::String(string.to_string()))
+        .spanned();
+    choice((int, bool, string)).padded()
 }
 
 pub fn atom<'src>(
-    expr: impl Parser<'src, &'src str, Spanned<Expr>, extra::Err<Rich<'src, char>>>,
+    expr: impl GenericParser<'src, Spanned<Expr>>,
 ) -> impl Parser<'src, &'src str, Spanned<Box<Atom>>, extra::Err<Rich<'src, char>>> {
     literal()
         .map(|l| l.span.make_wrapped(Box::new(Atom::Literal(l))))
@@ -185,7 +197,7 @@ pub fn atom<'src>(
 }
 
 pub fn primary<'src>(
-    expr: impl Parser<'src, &'src str, Spanned<Expr>, extra::Err<Rich<'src, char>>> + Clone + 'src,
+    expr: impl GenericParser<'src, Spanned<Expr>> + Clone + 'src,
 ) -> impl Parser<'src, &'src str, Spanned<Box<Primary>>, extra::Err<Rich<'src, char>>> {
     recursive(|primary| {
         let atom = atom(expr.clone())

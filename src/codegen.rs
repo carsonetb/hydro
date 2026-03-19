@@ -20,6 +20,7 @@ use crate::{
     context::LanguageContext,
     int::Int,
     parser::{Atom, Decl, Expr, ParseLiteral, Primary, Program, Stmt},
+    string::Str,
     types::{Metatype, TypeID},
     unit::Unit,
     value::{Field, Literal, Value, ValueEnum, any_to_basic},
@@ -55,13 +56,16 @@ impl CompileError {
     }
 }
 
-pub fn gen_literal<'ctx>(ctx: &LanguageContext<'ctx>, literal: &ParseLiteral) -> ValueEnum<'ctx> {
+pub fn gen_literal<'ctx>(
+    ctx: &LanguageContext<'ctx>,
+    literal: &ParseLiteral,
+    name: String,
+) -> ValueEnum<'ctx> {
     match literal {
         ParseLiteral::Error(_) => panic!(),
-        ParseLiteral::Int(int) => ValueEnum::Int(Int::from_literal(ctx, *int, "int".to_string())),
-        ParseLiteral::Bool(bool) => {
-            ValueEnum::Bool(Bool::from_literal(ctx, *bool, "bool".to_string()))
-        }
+        ParseLiteral::Int(int) => ValueEnum::Int(Int::from_literal(ctx, *int, name)),
+        ParseLiteral::Bool(bool) => ValueEnum::Bool(Bool::from_literal(ctx, *bool, name)),
+        ParseLiteral::String(str) => ValueEnum::String(Str::from_literal(ctx, str.clone(), name)),
     }
 }
 
@@ -71,7 +75,7 @@ pub fn gen_atom<'ctx>(
     into_name: String,
 ) -> Result<ValueEnum<'ctx>, CompileError> {
     match atom {
-        Atom::Literal(literal) => Ok(gen_literal(ctx, literal)),
+        Atom::Literal(literal) => Ok(gen_literal(ctx, literal, into_name)),
         Atom::Grouping(expr) => gen_expr(ctx, expr, into_name),
         Atom::Var(name) => ctx.get_field(name.clone()).map(|val| val.value.clone()),
     }
@@ -101,7 +105,9 @@ pub fn gen_primary<'ctx>(
                     format!("{}_callee_arg{}", into_name, i),
                 )?);
             }
-            Ok(on_eval.call(ctx, args_eval, into_name))
+            Ok(on_eval
+                .call(ctx, args_eval, into_name)
+                .map_err(|err| CompileError::new(on.span, err))?)
         }
         Primary::Member { on, name } => todo!(),
     }
@@ -140,7 +146,9 @@ pub fn gen_expr<'ctx>(
                 .try_as_function()
                 .unwrap();
             op_fn.verify(vec![left_type, right_type]);
-            Ok(op_fn.call(ctx, vec![left_val, right_val], into_name))
+            Ok(op_fn
+                .call(ctx, vec![left_val, right_val], into_name)
+                .map_err(|err| CompileError::new(op.span, err)))?
         }
         Expr::Primary(primary) => gen_primary(ctx, primary, into_name),
     }
@@ -364,6 +372,8 @@ pub fn do_codegen<'ctx>(
     file.read_to_string(&mut src).unwrap();
 
     ctx.push_scope();
+
+    ctx.init_metatypes(&llvm_ctx);
 
     for decl in program.decls.iter() {
         match gen_decl_pre(llvm_ctx, ctx, decl) {

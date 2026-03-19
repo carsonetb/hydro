@@ -7,6 +7,7 @@ mod compile;
 mod context;
 mod int;
 mod parser;
+mod string;
 mod tuple;
 mod types;
 mod unit;
@@ -38,8 +39,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     let main_val = ctx.module.add_function("main", main_type, None);
     let entry = llvm_ctx.append_basic_block(main_val, "entry");
     ctx.builder.position_at_end(entry);
-
-    ctx.init_metatypes(&llvm_ctx);
 
     do_codegen(&llvm_ctx, &mut ctx, path, program);
 

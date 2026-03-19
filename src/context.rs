@@ -8,10 +8,10 @@ use inkwell::{
     module::Module,
     targets::{CodeModel, RelocMode, Target, TargetMachine},
     types::{
-        AnyTypeEnum, BasicMetadataTypeEnum, BasicTypeEnum, FloatType, FunctionType, IntType,
-        PointerType, StructType, VoidType,
+        AnyTypeEnum, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FloatType, FunctionType,
+        IntType, PointerType, StructType, VoidType,
     },
-    values::IntValue,
+    values::{BasicMetadataValueEnum, IntValue},
 };
 
 use crate::{
@@ -19,16 +19,18 @@ use crate::{
     callable::Function,
     codegen::CompileError,
     int::Int,
+    string::Str,
     tuple::Tuple,
     types::{Metatype, TypeID},
     unit::Unit,
-    value::{Field, ValueStatic, any_to_basic},
+    value::{Field, ValueEnum, ValueStatic, any_to_basic},
 };
 
 pub type ScopeItem<'ctx> = HashMap<String, Field<'ctx>>;
 pub type Scope<'ctx> = Vec<ScopeItem<'ctx>>;
 
 pub struct LanguageContext<'ctx> {
+    pub context: &'ctx Context,
     pub metatypes: HashMap<TypeID, Option<Metatype<'ctx>>>,
     pub types: LLVMTypes<'ctx>,
     pub module: Module<'ctx>,
@@ -58,6 +60,7 @@ impl<'ctx> LanguageContext<'ctx> {
         let builder = context.create_builder();
 
         Self {
+            context,
             metatypes: HashMap::<TypeID, Option<Metatype<'ctx>>>::new(),
             types: LLVMTypes::new(context),
             builder,
@@ -77,6 +80,53 @@ impl<'ctx> LanguageContext<'ctx> {
     }
 
     pub fn init_metatypes(&mut self, context: &'ctx Context) {
+        Str::build_metatype(context, self, vec![]);
+        let print_llvm_type = self.types.void.fn_type(
+            &[BasicMetadataTypeEnum::StructType(
+                self.get(TypeID::from_base("String".to_string()))
+                    .obj_struct
+                    .unwrap(),
+            )],
+            false,
+        );
+        let print_llvm_fn = self.module.add_function("print", print_llvm_type, None);
+        let entry = context.append_basic_block(print_llvm_fn, "entry");
+        let old_block = self.builder.get_insert_block().unwrap();
+        self.builder.position_at_end(entry);
+        let ptr = self
+            .builder
+            .build_extract_value(
+                print_llvm_fn.get_first_param().unwrap().into_struct_value(),
+                1,
+                "strptr",
+            )
+            .unwrap()
+            .into_pointer_value();
+        let printf_fn = self.module.add_function("printf", print_llvm_type, None);
+        self.builder.build_call(
+            printf_fn,
+            &[BasicMetadataValueEnum::PointerValue(ptr)],
+            "unused",
+        );
+        self.builder.build_return(None);
+        self.builder.position_at_end(old_block);
+
+        let print_type = TypeID::new(
+            "Function".to_string(),
+            vec![
+                TypeID::new(
+                    "Tuple".to_string(),
+                    vec![TypeID::from_base("String".to_string())],
+                ),
+                TypeID::from_base("Unit".to_string()),
+            ],
+        );
+        let print = Function::from_function(context, self, print_llvm_fn, print_type);
+        self.add_field(
+            "print".to_string(),
+            Field::new(ValueEnum::Function(print), "print".to_string()),
+        );
+
         self.generic_gens
             .insert("Function".to_string(), Function::build_metatype);
         self.generic_gens

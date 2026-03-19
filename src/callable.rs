@@ -20,7 +20,7 @@ pub trait Callable<'ctx> {
         ctx: &LanguageContext<'ctx>,
         args: Vec<ValueEnum<'ctx>>,
         into_name: String,
-    ) -> ValueEnum<'ctx>;
+    ) -> Result<ValueEnum<'ctx>, String>;
     fn args(&self) -> Vec<TypeID>;
     fn returns(&self) -> TypeID;
 }
@@ -73,8 +73,10 @@ impl<'ctx> Callable<'ctx> for Function<'ctx> {
         ctx: &LanguageContext<'ctx>,
         args: Vec<ValueEnum<'ctx>>,
         into_name: String,
-    ) -> ValueEnum<'ctx> {
-        assert!(self.verify(args.iter().map(|arg| arg.get_type(ctx)).collect()));
+    ) -> Result<ValueEnum<'ctx>, String> {
+        if !self.verify(args.iter().map(|arg| arg.get_type(ctx)).collect()) {
+            return Err("Arguments to this function are incorrect.".to_string()); // TODO: Improve this error.
+        }
 
         let arg_ptrs: Vec<BasicMetadataValueEnum<'ctx>> = args
             .into_iter()
@@ -92,7 +94,7 @@ impl<'ctx> Callable<'ctx> for Function<'ctx> {
             .unwrap()
             .try_as_basic_value();
 
-        if self.returns().base != "Unit".to_string() {
+        Ok(if self.returns().base != "Unit".to_string() {
             ValueEnum::from_val(
                 ctx,
                 result.expect_basic("Function return type is not a value?"),
@@ -101,7 +103,7 @@ impl<'ctx> Callable<'ctx> for Function<'ctx> {
             )
         } else {
             ValueEnum::Unit(Unit {})
-        }
+        })
     }
 
     fn args(&self) -> Vec<TypeID> {
