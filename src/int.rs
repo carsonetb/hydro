@@ -1,17 +1,20 @@
+use std::ops::Range;
+
 use crate::{
-    callable::Function,
+    callable::{Function, MemberFunction},
     codegen::CompileError,
     context::{LLVMTypes, LanguageContext},
     types::{BasicBuiltin, MetatypeBuilder, TypeID},
     value::{Copyable, Literal, Value, ValueEnum, ValueStatic},
 };
-use chumsky::span::Spanned;
+use chumsky::span::{SimpleSpan, Span, Spanned, WrappingSpan};
 use inkwell::{
     IntPredicate,
     context::Context,
     types::{AnyTypeEnum, BasicMetadataTypeEnum, BasicTypeEnum, StructType},
     values::{
-        AnyValue, BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue, StructValue,
+        AnyValue, BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, IntValue,
+        StructValue,
     },
 };
 
@@ -78,6 +81,16 @@ impl<'ctx> Value<'ctx> for Int<'ctx> {
         let mut cmp_type = bin_type.clone();
         cmp_type.generics[1] = TypeID::from_base("Bool".to_string());
 
+        let int_type = TypeID::from_base("Int".to_string());
+        let to_string_type = TypeID::new(
+            "MemberFunction".to_string(),
+            vec![
+                int_type.clone(),
+                TypeID::new("Tuple".to_string(), vec![]),
+                TypeID::from_base("String".to_string()),
+            ],
+        );
+
         macro_rules! op_fun_wrapper {
             ($op_name:expr, $fn_name:expr, $ty:expr) => {
                 Ok(ValueEnum::Function(Function::new(
@@ -110,6 +123,27 @@ impl<'ctx> Value<'ctx> for Int<'ctx> {
             ">=" => op_fun_wrapper!(">=", "Int.>=", cmp_type),
             "==" => op_fun_wrapper!("==", "Int.==", cmp_type),
             "!=" => op_fun_wrapper!("!=", "Int.!=", cmp_type),
+            "to_string" => {
+                let bound_struct = ctx
+                    .get(to_string_type.clone())
+                    .obj_struct
+                    .unwrap()
+                    .const_named_struct(&[
+                        self.val.as_basic_value_enum(),
+                        ctx.module
+                            .get_function("Int.to_string")
+                            .unwrap()
+                            .as_global_value()
+                            .as_pointer_value()
+                            .as_basic_value_enum(),
+                    ]);
+                Ok(ValueEnum::MemberFunction(MemberFunction::new(
+                    ctx,
+                    bound_struct,
+                    to_string_type,
+                    "Int.to_string".to_string(),
+                )))
+            }
             _ => Err(CompileError::new(
                 name.span,
                 format!("Type `Int` has no `{}` member.", name.inner),
@@ -312,9 +346,18 @@ impl<'ctx> ValueStatic<'ctx> for Int<'ctx> {
         );
         ctx.builder.build_return(None);
         ctx.builder.position_at_end(old_block);
-        // let to_string_type = TypeID::new("Function".to_string(), vec![TypeID::new("Tuple".to_string(), vec!["Int"])])
 
         builder.build(llvm_ctx, ctx, generics);
+
+        let to_string_type = TypeID::new(
+            "MemberFunction".to_string(),
+            vec![
+                TypeID::from_base("Int".to_string()),
+                TypeID::new("Tuple".to_string(), vec![]),
+                TypeID::from_base("String".to_string()),
+            ],
+        );
+        ctx.get_with_gen_ext(to_string_type.clone());
     }
 }
 

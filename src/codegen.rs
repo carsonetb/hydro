@@ -91,12 +91,6 @@ pub fn gen_primary<'ctx>(
         Primary::Call { on, generics, args } => {
             let on_eval = gen_primary(ctx, on, format!("{}_callee", into_name))?;
             let on_typ = on_eval.get_type(ctx);
-            let on_eval = on_eval.try_as_function().ok_or_else(|| {
-                CompileError::new(
-                    on.span,
-                    format!("Expression does not evaluate to a Function type, instead it is of type `{}`", on_typ),
-                )
-            })?;
             let mut args_eval = Vec::<ValueEnum<'ctx>>::new();
             for (i, arg) in args.iter().enumerate() {
                 args_eval.push(gen_expr(
@@ -105,9 +99,23 @@ pub fn gen_primary<'ctx>(
                     format!("{}_callee_arg{}", into_name, i),
                 )?);
             }
-            Ok(on_eval
-                .call(ctx, args_eval, into_name)
-                .map_err(|err| CompileError::new(on.span, err))?)
+            Ok((if on_eval.clone().try_as_function().is_some() {
+                Ok(on_eval
+                    .try_as_function()
+                    .unwrap()
+                    .call(ctx, args_eval, into_name))
+            } else if on_eval.clone().try_as_member_function().is_some() {
+                Ok(on_eval
+                    .try_as_member_function()
+                    .unwrap()
+                    .call(ctx, args_eval, into_name))
+            } else {
+                Err(CompileError::new(
+                    on.span,
+                    format!("Expression does not evaluate to a Function type, instead it is of type `{}`", on_typ),
+                ))
+            })?
+            .map_err(|err| CompileError::new(on.span, err))?)
         }
         Primary::Member { on, name } => {
             let on = gen_primary(ctx, on, format!("{}_on", into_name)).unwrap();

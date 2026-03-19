@@ -245,7 +245,8 @@ impl<'ctx> Callable<'ctx> for MemberFunction<'ctx> {
             return Err("Arguments to this function are incorrect.".to_string()); // TODO: Improve this error.
         }
 
-        let mut args_with_bound = vec![self.get_bound(ctx)];
+        let mut args_with_bound =
+            vec![self.get_bound(ctx, format!("{}_bound", into_name).as_str())];
         args_with_bound.extend(args);
 
         let fn_ptr = ctx

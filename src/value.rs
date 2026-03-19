@@ -9,7 +9,7 @@ use strum_macros::EnumTryAs;
 
 use crate::{
     bool::Bool,
-    callable::Function,
+    callable::{Function, MemberFunction},
     codegen::CompileError,
     context::LanguageContext,
     int::Int,
@@ -72,6 +72,7 @@ pub enum ValueEnum<'ctx> {
     String(Str<'ctx>),
     Tuple(Tuple<'ctx>),
     Function(Function<'ctx>),
+    MemberFunction(MemberFunction<'ctx>),
 }
 
 impl<'ctx> ValueEnum<'ctx> {

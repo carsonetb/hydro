@@ -16,7 +16,7 @@ use inkwell::{
 
 use crate::{
     bool::Bool,
-    callable::Function,
+    callable::{Function, MemberFunction},
     codegen::CompileError,
     int::Int,
     string::Str,
@@ -130,6 +130,8 @@ impl<'ctx> LanguageContext<'ctx> {
         self.generic_gens
             .insert("Function".to_string(), Function::build_metatype);
         self.generic_gens
+            .insert("MemberFunction".to_string(), MemberFunction::build_metatype);
+        self.generic_gens
             .insert("Tuple".to_string(), Tuple::build_metatype);
         Unit::build_metatype(context, self, vec![]);
         Bool::build_metatype(context, self, vec![]);
@@ -165,6 +167,15 @@ impl<'ctx> LanguageContext<'ctx> {
         }
     }
 
+    pub fn get_with_gen_ext(&mut self, id: TypeID) -> &Metatype<'ctx> {
+        if self.metatypes.contains_key(&id.clone()) {
+            self.get(id)
+        } else {
+            self.generic_gens.get(&id.base).unwrap()(self.context, self, id.generics.clone());
+            self.get(id)
+        }
+    }
+
     pub fn get(&self, id: TypeID) -> &Metatype<'ctx> {
         self.maybe_get(id.clone())
             .expect(format!("Cannot find type {id} or it is not fully initialized.").as_str())
@@ -183,7 +194,10 @@ impl<'ctx> LanguageContext<'ctx> {
     }
 
     pub fn maybe_get(&self, id: TypeID) -> Option<&Metatype<'ctx>> {
-        self.metatypes.get(&id).unwrap().as_ref()
+        self.metatypes
+            .get(&id)
+            .expect(format!("Could not find type {id}").as_str())
+            .as_ref()
     }
 
     pub fn string(&self) -> &Metatype<'ctx> {

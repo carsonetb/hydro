@@ -105,8 +105,8 @@ impl<'ctx> Copyable<'ctx> for Str<'ctx> {
             .builder
             .build_malloc(obj_struct.get_type(), &name)
             .unwrap();
-        let new_mem = ctx.builder.build_memcpy(dest, 1, ptr, 1, size).unwrap();
-        Self::new(ctx, size, new_mem)
+        ctx.builder.build_memcpy(dest, 1, ptr, 1, size).unwrap();
+        Self::new(ctx, size, dest)
     }
 
     fn from(ctx: &LanguageContext<'ctx>, other: Self, name: String) -> Self {
