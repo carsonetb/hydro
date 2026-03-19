@@ -13,7 +13,7 @@ use crate::{
     context::LanguageContext,
     types::{BasicBuiltin, Metatype, MetatypeBuilder, TypeID},
     unit::Unit,
-    value::{Copyable, Field, Value, ValueEnum, ValueStatic},
+    value::{Copyable, Field, Value, ValueEnum, ValueStatic, any_to_basic},
 };
 
 pub trait Callable<'ctx> {
@@ -201,14 +201,38 @@ pub struct MemberFunction<'ctx> {
 }
 
 impl<'ctx> MemberFunction<'ctx> {
-    pub fn get_bound(&self, ctx: &LanguageContext<'ctx>) -> ValueEnum<'ctx> {
-        todo!()
+    pub fn new(
+        ctx: &LanguageContext<'ctx>,
+        val: StructValue<'ctx>,
+        typ: TypeID,
+        name: String,
+    ) -> Self {
+        assert!(typ.generics.len() == 3);
+        assert!(typ.generics[1].base == "Tuple".to_string());
+
+        Self {
+            name,
+            metatype: typ,
+            val,
+        }
+    }
+
+    pub fn get_bound(&self, ctx: &LanguageContext<'ctx>, into_name: &str) -> ValueEnum<'ctx> {
+        ValueEnum::from_val(
+            ctx,
+            ctx.builder
+                .build_extract_value(self.val, 0, into_name)
+                .unwrap()
+                .as_basic_value_enum(),
+            self.metatype.generics[0].clone(),
+            into_name.to_string(),
+        )
     }
 }
 
 impl<'ctx> Callable<'ctx> for MemberFunction<'ctx> {
     fn verify(&self, args: Vec<TypeID>) -> bool {
-        todo!()
+        args == self.args()
     }
 
     fn call(
@@ -248,15 +272,18 @@ impl<'ctx> Value<'ctx> for MemberFunction<'ctx> {
         name: Spanned<String>,
         into: String,
     ) -> Result<ValueEnum<'ctx>, CompileError> {
-        todo!()
+        Err(CompileError::new(
+            name.span,
+            format!("Function types have no members!"),
+        ))
     }
 
     fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeID {
-        todo!()
+        self.metatype.clone()
     }
 
     fn get_value(&self) -> BasicValueEnum<'ctx> {
-        todo!()
+        self.val.as_basic_value_enum()
     }
 }
 
@@ -266,7 +293,28 @@ impl<'ctx> ValueStatic<'ctx> for MemberFunction<'ctx> {
         ctx: &mut LanguageContext<'ctx>,
         generics: Vec<TypeID>,
     ) {
-        todo!()
+        assert_eq!(generics.len(), 3);
+        assert_eq!(generics[1].base, "Tuple");
+
+        let type_name = TypeID::new("MemberFunction".to_string(), generics.clone());
+        let obj_struct = llvm_ctx.opaque_struct_type(&type_name.to_string());
+        obj_struct.set_body(
+            &[
+                any_to_basic(ctx.get(generics[0].clone()).storage_type).unwrap(),
+                ctx.types.ptr.as_basic_type_enum(),
+            ],
+            false,
+        );
+
+        let mut builder = MetatypeBuilder::new(
+            ctx,
+            BasicBuiltin::Function,
+            TypeID::new("MemberFunction".to_string(), generics.clone()),
+            Some(obj_struct),
+            AnyTypeEnum::StructType(obj_struct),
+            false,
+        );
+        builder.build(llvm_ctx, ctx, generics);
     }
 }
 
@@ -277,10 +325,15 @@ impl<'ctx> Copyable<'ctx> for MemberFunction<'ctx> {
         val_type: TypeID,
         name: String,
     ) -> Self {
-        todo!()
+        Self::new(ctx, val.into_struct_value(), val_type, name)
     }
 
     fn from(ctx: &LanguageContext<'ctx>, other: Self, name: String) -> Self {
-        todo!()
+        Self::from_val(
+            ctx,
+            BasicValueEnum::StructValue(other.val),
+            other.get_type(ctx),
+            name,
+        )
     }
 }
