@@ -112,7 +112,7 @@ impl<'ctx> Value<'ctx> for Int<'ctx> {
             "!=" => op_fun_wrapper!("!=", "Int.!=", cmp_type),
             _ => Err(CompileError::new(
                 name.span,
-                format!("Type `Int` has no `{}` operator.", name.inner),
+                format!("Type `Int` has no `{}` member.", name.inner),
             )),
         }
     }
@@ -254,6 +254,65 @@ impl<'ctx> ValueStatic<'ctx> for Int<'ctx> {
         builder.add_static(">=".to_string(), ValueEnum::Function(geq_fn));
         builder.add_static("==".to_string(), ValueEnum::Function(eqa_fn));
         builder.add_static("!=".to_string(), ValueEnum::Function(neq_fn));
+
+        let sprintf_type = ctx.types.void.fn_type(
+            &vec![BasicMetadataTypeEnum::PointerType(ctx.types.ptr); 2],
+            false,
+        );
+        let sprintf = ctx.module.add_function("sprintf", sprintf_type, None);
+
+        let malloc_type = ctx
+            .types
+            .ptr
+            .fn_type(&[BasicMetadataTypeEnum::IntType(ctx.types.int)], false);
+        let malloc_func = ctx.module.add_function("malloc", malloc_type, None);
+
+        let to_string_llvm_type = ctx
+            .string()
+            .obj_struct
+            .unwrap()
+            .fn_type(&[BasicMetadataTypeEnum::IntType(ctx.types.int)], false);
+        let to_string_llvm_fn = ctx
+            .module
+            .add_function("Int.to_string", to_string_llvm_type, None);
+        let entry = llvm_ctx.append_basic_block(to_string_llvm_fn, "entry");
+        let old_block = ctx.builder.get_insert_block().unwrap();
+        ctx.builder.position_at_end(entry);
+
+        let format = llvm_ctx.const_string(b"%d", true);
+        let format_mem = ctx
+            .builder
+            .build_alloca(format.get_type(), "format")
+            .unwrap(); // TODO: Don't alloca
+        ctx.builder.build_store(format_mem, format);
+        let out_mem = ctx
+            .builder
+            .build_call(
+                malloc_func,
+                &[BasicMetadataValueEnum::IntValue(ctx.int(48))],
+                "out_mem",
+            )
+            .unwrap()
+            .try_as_basic_value()
+            .unwrap_basic()
+            .into_pointer_value();
+        ctx.builder.build_call(
+            sprintf,
+            &[
+                BasicMetadataValueEnum::PointerValue(out_mem),
+                BasicMetadataValueEnum::PointerValue(format_mem),
+                BasicMetadataValueEnum::IntValue(
+                    to_string_llvm_fn
+                        .get_first_param()
+                        .unwrap()
+                        .into_int_value(),
+                ),
+            ],
+            "UNUSED",
+        );
+        ctx.builder.build_return(None);
+        ctx.builder.position_at_end(old_block);
+        // let to_string_type = TypeID::new("Function".to_string(), vec![TypeID::new("Tuple".to_string(), vec!["Int"])])
 
         builder.build(llvm_ctx, ctx, generics);
     }

@@ -186,6 +186,10 @@ impl<'ctx> LanguageContext<'ctx> {
         self.metatypes.get(&id).unwrap().as_ref()
     }
 
+    pub fn string(&self) -> &Metatype<'ctx> {
+        self.get(TypeID::from_base("String".to_string()))
+    }
+
     pub fn int(&self, value: u64) -> IntValue<'ctx> {
         self.types.int.const_int(value, false)
     }

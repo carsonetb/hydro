@@ -109,7 +109,10 @@ pub fn gen_primary<'ctx>(
                 .call(ctx, args_eval, into_name)
                 .map_err(|err| CompileError::new(on.span, err))?)
         }
-        Primary::Member { on, name } => todo!(),
+        Primary::Member { on, name } => {
+            let on = gen_primary(ctx, on, format!("{}_on", into_name)).unwrap();
+            on.member(ctx, name.clone(), into_name)
+        }
     }
 }
 

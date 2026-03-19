@@ -205,6 +205,17 @@ pub fn primary<'src>(
             .boxed();
 
         atom.foldl(
+            just(".").ignore_then(ident().spanned()).repeated(),
+            |on, ident| {
+                on.span
+                    .union(ident.span)
+                    .make_wrapped(Box::new(Primary::Member {
+                        on,
+                        name: ident.span.make_wrapped(ident.inner.to_string()),
+                    }))
+            },
+        )
+        .foldl(
             type_parser()
                 .separated_by(just(","))
                 .collect::<Vec<_>>()
@@ -228,17 +239,6 @@ pub fn primary<'src>(
                             None => vec![],
                         },
                         args: stuff.inner.1,
-                    }))
-            },
-        )
-        .foldl(
-            just(".").ignore_then(ident().spanned()).repeated(),
-            |on, ident| {
-                on.span
-                    .union(ident.span)
-                    .make_wrapped(Box::new(Primary::Member {
-                        on,
-                        name: ident.span.make_wrapped(ident.inner.to_string()),
                     }))
             },
         )
