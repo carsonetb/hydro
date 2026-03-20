@@ -22,6 +22,7 @@ pub enum BasicBuiltin {
     String,
     Tuple,
     Function,
+    MemberFunction,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

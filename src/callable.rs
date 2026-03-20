@@ -309,7 +309,7 @@ impl<'ctx> ValueStatic<'ctx> for MemberFunction<'ctx> {
 
         let mut builder = MetatypeBuilder::new(
             ctx,
-            BasicBuiltin::Function,
+            BasicBuiltin::MemberFunction,
             TypeID::new("MemberFunction".to_string(), generics.clone()),
             Some(obj_struct),
             AnyTypeEnum::StructType(obj_struct),

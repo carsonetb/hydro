@@ -90,6 +90,9 @@ impl<'ctx> ValueEnum<'ctx> {
             BasicBuiltin::Function => Self::Function(Function::from_val(ctx, val, typ, name)),
             BasicBuiltin::Tuple => Self::Tuple(Tuple::from_val(ctx, val, typ, name)),
             BasicBuiltin::String => Self::String(Str::from_val(ctx, val, typ, name)),
+            BasicBuiltin::MemberFunction => {
+                Self::MemberFunction(MemberFunction::from_val(ctx, val, typ, name))
+            }
         }
     }
 }

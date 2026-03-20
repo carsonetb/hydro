@@ -13,7 +13,7 @@ use crate::{
 
 #[derive(Clone, Debug)]
 pub struct Str<'ctx> {
-    pub val: StructValue<'ctx>,
+    pub val: PointerValue<'ctx>,
 }
 
 impl<'ctx> Str<'ctx> {
@@ -21,13 +21,21 @@ impl<'ctx> Str<'ctx> {
         ctx: &LanguageContext<'ctx>,
         size: IntValue<'ctx>,
         value: PointerValue<'ctx>,
+        into_name: &str,
     ) -> Self {
         let obj_struct = ctx.context.get_struct_type("String").unwrap();
-        let obj = obj_struct.const_named_struct(&vec![
-            size.as_basic_value_enum(),
-            value.as_basic_value_enum(),
-        ]);
-        Self { val: obj }
+        let mem = ctx.builder.build_malloc(obj_struct, into_name).unwrap();
+        let dest_size = ctx
+            .builder
+            .build_struct_gep(obj_struct, mem, 0, "out_size_ptr")
+            .unwrap();
+        let dest_raw_ptr = ctx
+            .builder
+            .build_struct_gep(obj_struct, mem, 1, "out_raw_ptr_ptr")
+            .unwrap();
+        ctx.builder.build_store(dest_size, ctx.int(48));
+        ctx.builder.build_store(dest_raw_ptr, value);
+        Self { val: mem }
     }
 }
 
@@ -76,7 +84,7 @@ impl<'ctx> ValueStatic<'ctx> for Str<'ctx> {
             BasicBuiltin::String,
             typeid.clone(),
             Some(obj_struct),
-            obj_struct.as_any_type_enum(),
+            ctx.types.ptr.as_any_type_enum(),
             false,
         );
         builder.build(llvm_ctx, ctx, generics);
@@ -90,23 +98,39 @@ impl<'ctx> Copyable<'ctx> for Str<'ctx> {
         val_type: TypeID,
         name: String,
     ) -> Self {
-        let obj_struct = val.into_struct_value();
+        // TODO: Move this into a new function
+        let ptr = val.into_pointer_value();
+        let struct_typ = ctx.get(val_type).obj_struct.unwrap();
+        let size_ptr = ctx
+            .builder
+            .build_struct_gep(struct_typ, ptr, 0, &format!("{}_from_size_ptr", name))
+            .unwrap();
         let size = ctx
             .builder
-            .build_extract_value(obj_struct, 0, &name)
+            .build_load(ctx.types.int, size_ptr, &format!("{}_from_size", name))
             .unwrap()
             .into_int_value();
-        let ptr = ctx
+        let raw_ptr_ptr = ctx
             .builder
-            .build_extract_value(obj_struct, 1, &name)
+            .build_struct_gep(struct_typ, ptr, 1, &format!("{}_from_raw_ptr_ptr", name))
+            .unwrap();
+        let raw_ptr = ctx
+            .builder
+            .build_load(
+                ctx.types.ptr,
+                raw_ptr_ptr,
+                &format!("{}_from_raw_ptr", name),
+            )
             .unwrap()
             .into_pointer_value();
-        let dest = ctx
+        let raw_dest = ctx
             .builder
-            .build_malloc(obj_struct.get_type(), &name)
+            .build_array_malloc(ctx.types.char, size, &format!("{}_raw_ptr", name))
             .unwrap();
-        ctx.builder.build_memcpy(dest, 1, ptr, 1, size).unwrap();
-        Self::new(ctx, size, dest)
+        ctx.builder
+            .build_memcpy(raw_dest, 1, raw_ptr, 1, size)
+            .unwrap();
+        Self::new(ctx, size, raw_dest, name.as_str())
     }
 
     fn from(ctx: &LanguageContext<'ctx>, other: Self, name: String) -> Self {
@@ -121,7 +145,7 @@ impl<'ctx> Copyable<'ctx> for Str<'ctx> {
 
 impl<'ctx> Literal<'ctx> for Str<'ctx> {
     type LiteralType = String;
-    type Repr = StructValue<'ctx>;
+    type Repr = PointerValue<'ctx>;
 
     fn from_literal(ctx: &LanguageContext<'ctx>, literal: Self::LiteralType, name: String) -> Self {
         let const_string = ctx.context.const_string(literal.as_bytes(), true);
@@ -131,7 +155,7 @@ impl<'ctx> Literal<'ctx> for Str<'ctx> {
             .build_array_malloc(const_string.get_type(), size, &name)
             .unwrap();
         ctx.builder.build_store(array, const_string);
-        Self::new(ctx, size, array)
+        Self::new(ctx, size, array, name.as_str())
     }
 
     fn raw(&self, ctx: &LanguageContext<'ctx>, name: String) -> Self::Repr {

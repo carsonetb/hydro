@@ -81,11 +81,10 @@ impl<'ctx> LanguageContext<'ctx> {
 
     pub fn init_metatypes(&mut self, context: &'ctx Context) {
         Str::build_metatype(context, self, vec![]);
+        let string_metatype = self.get(TypeID::from_base("String".to_string()));
         let print_llvm_type = self.types.void.fn_type(
-            &[BasicMetadataTypeEnum::StructType(
-                self.get(TypeID::from_base("String".to_string()))
-                    .obj_struct
-                    .unwrap(),
+            &[BasicMetadataTypeEnum::PointerType(
+                string_metatype.storage_type.into_pointer_type(),
             )],
             false,
         );
@@ -93,13 +92,21 @@ impl<'ctx> LanguageContext<'ctx> {
         let entry = context.append_basic_block(print_llvm_fn, "entry");
         let old_block = self.builder.get_insert_block().unwrap();
         self.builder.position_at_end(entry);
-        let ptr = self
+        let ptr_ptr = self
             .builder
-            .build_extract_value(
-                print_llvm_fn.get_first_param().unwrap().into_struct_value(),
+            .build_struct_gep(
+                string_metatype.obj_struct.unwrap(),
+                print_llvm_fn
+                    .get_first_param()
+                    .unwrap()
+                    .into_pointer_value(),
                 1,
                 "strptr",
             )
+            .unwrap();
+        let ptr = self
+            .builder
+            .build_load(self.types.ptr, ptr_ptr, "strptr")
             .unwrap()
             .into_pointer_value();
         let printf_fn = self.module.add_function("printf", print_llvm_type, None);

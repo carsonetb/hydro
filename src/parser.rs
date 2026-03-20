@@ -135,7 +135,7 @@ pub fn type_parser<'src>() -> impl GenericParser<'src, ParserType> {
             .map(|name: Spanned<&str>| name.span.make_wrapped(name.inner.to_string()));
 
         let args: Boxed<'_, '_, &str, Spanned<Vec<ParserType>>, Err<Rich<'src, char>>> = typ
-            .separated_by(just(','))
+            .separated_by(just(',').padded())
             .collect::<Vec<_>>()
             .delimited_by(just('<'), just('>'))
             .spanned()
@@ -217,7 +217,7 @@ pub fn primary<'src>(
         )
         .foldl(
             type_parser()
-                .separated_by(just(","))
+                .separated_by(just(",").padded())
                 .collect::<Vec<_>>()
                 .delimited_by(just("<"), just(">"))
                 .or_not()

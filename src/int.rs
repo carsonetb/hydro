@@ -302,9 +302,8 @@ impl<'ctx> ValueStatic<'ctx> for Int<'ctx> {
         let malloc_func = ctx.module.add_function("malloc", malloc_type, None);
 
         let to_string_llvm_type = ctx
-            .string()
-            .obj_struct
-            .unwrap()
+            .types
+            .ptr
             .fn_type(&[BasicMetadataTypeEnum::IntType(ctx.types.int)], false);
         let to_string_llvm_fn = ctx
             .module
@@ -344,7 +343,22 @@ impl<'ctx> ValueStatic<'ctx> for Int<'ctx> {
             ],
             "UNUSED",
         );
-        ctx.builder.build_return(None);
+        let string_type = ctx
+            .get(TypeID::from_base("String".to_string()))
+            .obj_struct
+            .unwrap();
+        let struct_mem = ctx.builder.build_malloc(string_type, "out").unwrap();
+        let dest_size = ctx
+            .builder
+            .build_struct_gep(string_type, struct_mem, 0, "out_size_ptr")
+            .unwrap();
+        let dest_raw_ptr = ctx
+            .builder
+            .build_struct_gep(string_type, struct_mem, 1, "out_raw_ptr_ptr")
+            .unwrap();
+        ctx.builder.build_store(dest_size, ctx.int(48));
+        ctx.builder.build_store(dest_raw_ptr, out_mem);
+        ctx.builder.build_return(Some(&struct_mem));
         ctx.builder.position_at_end(old_block);
 
         builder.build(llvm_ctx, ctx, generics);
