@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, path::Path};
 
 use chumsky::span::{Spanned, WrappingSpan};
 use inkwell::{
@@ -7,12 +7,15 @@ use inkwell::{
     builder::Builder,
     context::Context,
     module::Module,
+    support::load_library_permanently,
     targets::{CodeModel, RelocMode, Target, TargetMachine},
     types::{
         AnyTypeEnum, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FloatType, FunctionType,
         IntType, PointerType, StructType, VoidType,
     },
-    values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue},
+    values::{
+        BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, IntValue, PointerValue,
+    },
 };
 
 use crate::{
@@ -81,6 +84,16 @@ impl<'ctx> LanguageContext<'ctx> {
     }
 
     pub fn init_metatypes(&mut self, context: &'ctx Context) {
+        const OUT_DIR: &'static str = env!("OUT_DIR");
+        let path = Path::new(OUT_DIR).join("libbuiltin.a");
+        load_library_permanently(&path).unwrap();
+
+        let copy_type = self
+            .types
+            .ptr
+            .fn_type(&[BasicMetadataTypeEnum::PointerType(self.types.ptr)], false);
+        let copy = self.module.add_function("String__copy", copy_type, None);
+
         Str::build_metatype(context, self, vec![]);
         let string_metatype = self.get(TypeID::from_base("String"));
         let print_llvm_type = self.types.void.fn_type(
@@ -90,34 +103,6 @@ impl<'ctx> LanguageContext<'ctx> {
             false,
         );
         let print_llvm_fn = self.module.add_function("print", print_llvm_type, None);
-        let entry = context.append_basic_block(print_llvm_fn, "entry");
-        let old_block = self.builder.get_insert_block().unwrap();
-        self.builder.position_at_end(entry);
-        let ptr_ptr = self
-            .builder
-            .build_struct_gep(
-                string_metatype.obj_struct.unwrap(),
-                print_llvm_fn
-                    .get_first_param()
-                    .unwrap()
-                    .into_pointer_value(),
-                1,
-                "strptr",
-            )
-            .unwrap();
-        let ptr = self
-            .builder
-            .build_load(self.types.ptr, ptr_ptr, "strptr")
-            .unwrap()
-            .into_pointer_value();
-        let printf_fn = self.module.add_function("printf", print_llvm_type, None);
-        self.builder.build_call(
-            printf_fn,
-            &[BasicMetadataValueEnum::PointerValue(ptr)],
-            "unused",
-        );
-        self.builder.build_return(None);
-        self.builder.position_at_end(old_block);
 
         let print_type = TypeID::new(
             "Function",
@@ -329,7 +314,17 @@ impl<'ctx> LanguageContext<'ctx> {
             .unwrap_basic()
     }
 
-    pub fn build_ptr_store()
+    pub fn build_ptr_store<V: BasicValue<'ctx>>(
+        &self,
+        typ: StructType<'ctx>,
+        ptr: PointerValue<'ctx>,
+        val: V,
+        ind: u32,
+        name: &str,
+    ) {
+        let dest_ptr = self.builder.build_struct_gep(typ, ptr, ind, name).unwrap();
+        self.builder.build_store(dest_ptr, val).unwrap();
+    }
 }
 
 pub struct LLVMTypes<'ctx> {

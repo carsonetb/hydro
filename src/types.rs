@@ -10,7 +10,7 @@ use inkwell::{
 use crate::{
     codegen::CompileError,
     context::LanguageContext,
-    value::{Field, Value, ValueEnum, ValueStatic, any_to_basic},
+    value::{any_to_basic, Field, Value, ValueEnum, ValueStatic},
 };
 
 #[derive(Clone, Debug, PartialEq)]

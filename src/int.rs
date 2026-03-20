@@ -128,7 +128,7 @@ impl<'ctx> Value<'ctx> for Int<'ctx> {
                     .const_named_struct(&[
                         self.val.as_basic_value_enum(),
                         ctx.module
-                            .get_function("Int.to_string")
+                            .get_function("Int__to_string")
                             .unwrap()
                             .as_global_value()
                             .as_pointer_value()
@@ -138,7 +138,7 @@ impl<'ctx> Value<'ctx> for Int<'ctx> {
                     ctx,
                     bound_struct,
                     to_string_type,
-                    "Int.to_string",
+                    into,
                 )))
             }
             _ => Err(CompileError::new(
@@ -286,66 +286,8 @@ impl<'ctx> ValueStatic<'ctx> for Int<'ctx> {
         builder.add_static("==", ValueEnum::Function(eqa_fn));
         builder.add_static("!=", ValueEnum::Function(neq_fn));
 
-        let sprintf_type = ctx.types.void.fn_type(
-            &vec![BasicMetadataTypeEnum::PointerType(ctx.types.ptr); 2],
-            false,
-        );
-        let sprintf = ctx.module.add_function("sprintf", sprintf_type, None);
-
-        let malloc_type = ctx
-            .types
-            .ptr
-            .fn_type(&[BasicMetadataTypeEnum::IntType(ctx.types.int)], false);
-        let malloc_func = ctx.module.add_function("malloc", malloc_type, None);
-
-        let to_string_llvm_type = ctx
-            .types
-            .ptr
-            .fn_type(&[BasicMetadataTypeEnum::IntType(ctx.types.int)], false);
-        let to_string_llvm_fn = ctx.add_function("Int.to_string", to_string_llvm_type);
-        let old_block = ctx.begin_function(to_string_llvm_fn);
-
-        let format = llvm_ctx.const_string(b"%d", true);
-        let format_mem = ctx
-            .builder
-            .build_alloca(format.get_type(), "format")
-            .unwrap(); // TODO: Don't alloca
-        ctx.builder.build_store(format_mem, format);
-        let out_mem = ctx
-            .build_call_returns(
-                malloc_func,
-                &[BasicMetadataValueEnum::IntValue(ctx.int(48))],
-                "out_mem",
-            )
-            .into_pointer_value();
-        ctx.builder.build_call(
-            sprintf,
-            &[
-                BasicMetadataValueEnum::PointerValue(out_mem),
-                BasicMetadataValueEnum::PointerValue(format_mem),
-                BasicMetadataValueEnum::IntValue(
-                    to_string_llvm_fn
-                        .get_first_param()
-                        .unwrap()
-                        .into_int_value(),
-                ),
-            ],
-            "UNUSED",
-        );
-        let string_type = ctx.get_struct(TypeID::from_base("String"));
-        let struct_mem = ctx.builder.build_malloc(string_type, "out").unwrap();
-        let dest_size = ctx
-            .builder
-            .build_struct_gep(string_type, struct_mem, 0, "out_size_ptr")
-            .unwrap();
-        let dest_raw_ptr = ctx
-            .builder
-            .build_struct_gep(string_type, struct_mem, 1, "out_raw_ptr_ptr")
-            .unwrap();
-        ctx.builder.build_store(dest_size, ctx.int(48));
-        ctx.builder.build_store(dest_raw_ptr, out_mem);
-        ctx.builder.build_return(Some(&struct_mem));
-        ctx.builder.position_at_end(old_block);
+        let to_string_llvm_type = ctx.types.ptr.fn_type(&[ctx.types.int.into()], false);
+        let to_string_llvm_fn = ctx.add_function("Int__to_string", to_string_llvm_type);
 
         builder.build(llvm_ctx, ctx, generics);
 

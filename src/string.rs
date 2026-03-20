@@ -1,7 +1,9 @@
 use chumsky::span::Spanned;
 use inkwell::{
-    types::{AnyType, BasicType},
-    values::{BasicValue, BasicValueEnum, IntValue, PointerValue, StructValue},
+    types::{AnyType, BasicMetadataTypeEnum, BasicType},
+    values::{
+        BasicMetadataValueEnum, BasicValue, BasicValueEnum, IntValue, PointerValue, StructValue,
+    },
 };
 
 use crate::{
@@ -98,39 +100,21 @@ impl<'ctx> Copyable<'ctx> for Str<'ctx> {
         val_type: TypeID,
         name: &str,
     ) -> Self {
-        // TODO: Move this into a new function
-        let ptr = val.into_pointer_value();
-        let struct_typ = ctx.get(val_type).obj_struct.unwrap();
-        let size_ptr = ctx
-            .builder
-            .build_struct_gep(struct_typ, ptr, 0, &format!("{}_from_size_ptr", name))
-            .unwrap();
-        let size = ctx
-            .builder
-            .build_load(ctx.types.int, size_ptr, &format!("{}_from_size", name))
-            .unwrap()
-            .into_int_value();
-        let raw_ptr_ptr = ctx
-            .builder
-            .build_struct_gep(struct_typ, ptr, 1, &format!("{}_from_raw_ptr_ptr", name))
-            .unwrap();
-        let raw_ptr = ctx
-            .builder
-            .build_load(
-                ctx.types.ptr,
-                raw_ptr_ptr,
-                &format!("{}_from_raw_ptr", name),
+        let copy_type = ctx
+            .types
+            .ptr
+            .fn_type(&[BasicMetadataTypeEnum::PointerType(ctx.types.ptr)], false);
+        let copy = ctx.module.get_function("String__copy").unwrap();
+        let copied = ctx
+            .build_call_returns(
+                copy,
+                &[BasicMetadataValueEnum::PointerValue(
+                    val.into_pointer_value(),
+                )],
+                name,
             )
-            .unwrap()
             .into_pointer_value();
-        let raw_dest = ctx
-            .builder
-            .build_array_malloc(ctx.types.char, size, &format!("{}_raw_ptr", name))
-            .unwrap();
-        ctx.builder
-            .build_memcpy(raw_dest, 1, raw_ptr, 1, size)
-            .unwrap();
-        Self::new(ctx, size, raw_dest, name)
+        Self { val: copied }
     }
 
     fn from(ctx: &LanguageContext<'ctx>, other: Self, name: &str) -> Self {
