@@ -19,13 +19,13 @@ impl<'ctx> Value<'ctx> for Unit {
         &self,
         _ctx: &LanguageContext<'ctx>,
         _name: Spanned<String>,
-        _into: String,
+        _into: &str,
     ) -> Result<ValueEnum<'ctx>, CompileError> {
         panic!()
     }
 
     fn get_type(&self, _ctx: &LanguageContext<'ctx>) -> TypeID {
-        TypeID::from_base("Unit".to_string())
+        TypeID::from_base("Unit")
     }
 
     fn get_value(&self) -> BasicValueEnum<'ctx> {
@@ -43,7 +43,7 @@ impl<'ctx> ValueStatic<'ctx> for Unit {
         let mut builder = MetatypeBuilder::new(
             ctx,
             BasicBuiltin::Unit,
-            TypeID::from_base("Unit".to_string()),
+            TypeID::from_base("Unit"),
             None,
             AnyTypeEnum::PointerType(ctx.types.ptr),
             false,

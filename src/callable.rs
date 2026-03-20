@@ -22,17 +22,17 @@ pub trait Callable<'ctx> {
         &self,
         ctx: &LanguageContext<'ctx>,
         args: Vec<ValueEnum<'ctx>>,
-        into_name: String,
+        into_name: &str,
     ) -> Result<ValueEnum<'ctx>, String>;
     fn args(&self) -> Vec<TypeID>;
     fn returns(&self) -> TypeID;
     fn call_basic(
         &self,
         ctx: &LanguageContext<'ctx>,
-        fn_name: String,
+        fn_name: &str,
         fn_ptr: PointerValue<'ctx>,
         args: Vec<ValueEnum<'ctx>>,
-        into_name: String,
+        into_name: &str,
     ) -> Result<ValueEnum<'ctx>, String> {
         let arg_ptrs: Vec<BasicMetadataValueEnum<'ctx>> = args
             .into_iter()
@@ -55,7 +55,7 @@ pub trait Callable<'ctx> {
                 ctx,
                 result.expect_basic("Function return type is not a value?"),
                 self.returns(),
-                format!("{}_returns", fn_name),
+                &format!("{}_returns", fn_name),
             )
         } else {
             ValueEnum::Unit(Unit {})
@@ -75,12 +75,12 @@ impl<'ctx> Function<'ctx> {
         ctx: &LanguageContext<'ctx>,
         fn_ptr: PointerValue<'ctx>,
         typ: TypeID,
-        name: String,
+        name: &str,
     ) -> Self {
         assert!(typ.generics.len() == 2);
         assert!(typ.generics[0].base == "Tuple".to_string());
         Self {
-            name,
+            name: name.to_string(),
             metatype: typ,
             ptr: fn_ptr,
         }
@@ -96,7 +96,7 @@ impl<'ctx> Function<'ctx> {
             ctx,
             fn_val.as_global_value().as_pointer_value(),
             typ,
-            fn_val.get_name().to_str().unwrap().to_owned(),
+            &fn_val.get_name().to_str().unwrap().to_owned(),
         )
     }
 }
@@ -110,13 +110,13 @@ impl<'ctx> Callable<'ctx> for Function<'ctx> {
         &self,
         ctx: &LanguageContext<'ctx>,
         args: Vec<ValueEnum<'ctx>>,
-        into_name: String,
+        into_name: &str,
     ) -> Result<ValueEnum<'ctx>, String> {
         if !self.verify(args.iter().map(|arg| arg.get_type(ctx)).collect()) {
             return Err("Arguments to this function are incorrect.".to_string()); // TODO: Improve this error.
         }
 
-        self.call_basic(ctx, self.name.clone(), self.ptr, args, into_name)
+        self.call_basic(ctx, &self.name, self.ptr, args, into_name)
     }
 
     fn args(&self) -> Vec<TypeID> {
@@ -133,11 +133,11 @@ impl<'ctx> Value<'ctx> for Function<'ctx> {
         &self,
         _ctx: &LanguageContext<'ctx>,
         name: Spanned<String>,
-        _into: String,
+        _into: &str,
     ) -> Result<ValueEnum<'ctx>, CompileError> {
         Err(CompileError::new(
             name.span,
-            format!("Function types have no members!"),
+            &format!("Function types have no members!"),
         ))
     }
 
@@ -159,12 +159,12 @@ impl<'ctx> ValueStatic<'ctx> for Function<'ctx> {
         assert_eq!(generics.len(), 2);
         assert_eq!(generics[0].base, "Tuple");
 
-        let type_name = TypeID::new("Function".to_string(), generics.clone());
+        let type_name = TypeID::new("Function", generics.clone());
 
         let mut builder = MetatypeBuilder::new(
             ctx,
             BasicBuiltin::Function,
-            TypeID::new("Function".to_string(), generics.clone()),
+            TypeID::new("Function", generics.clone()),
             None,
             AnyTypeEnum::PointerType(ctx.types.ptr),
             false,
@@ -178,12 +178,12 @@ impl<'ctx> Copyable<'ctx> for Function<'ctx> {
         ctx: &LanguageContext<'ctx>,
         ptr: BasicValueEnum<'ctx>,
         ptr_type: TypeID,
-        name: String,
+        name: &str,
     ) -> Self {
         Self::new(ctx, ptr.into_pointer_value(), ptr_type, name)
     }
 
-    fn from(ctx: &LanguageContext<'ctx>, other: Self, name: String) -> Self {
+    fn from(ctx: &LanguageContext<'ctx>, other: Self, name: &str) -> Self {
         Self::from_val(
             ctx,
             BasicValueEnum::PointerValue(other.ptr),
@@ -205,13 +205,13 @@ impl<'ctx> MemberFunction<'ctx> {
         ctx: &LanguageContext<'ctx>,
         val: StructValue<'ctx>,
         typ: TypeID,
-        name: String,
+        name: &str,
     ) -> Self {
         assert!(typ.generics.len() == 3);
         assert!(typ.generics[1].base == "Tuple".to_string());
 
         Self {
-            name,
+            name: name.to_string(),
             metatype: typ,
             val,
         }
@@ -225,7 +225,7 @@ impl<'ctx> MemberFunction<'ctx> {
                 .unwrap()
                 .as_basic_value_enum(),
             self.metatype.generics[0].clone(),
-            into_name.to_string(),
+            into_name,
         )
     }
 }
@@ -239,7 +239,7 @@ impl<'ctx> Callable<'ctx> for MemberFunction<'ctx> {
         &self,
         ctx: &LanguageContext<'ctx>,
         args: Vec<ValueEnum<'ctx>>,
-        into_name: String,
+        into_name: &str,
     ) -> Result<ValueEnum<'ctx>, String> {
         if !self.verify(args.iter().map(|arg| arg.get_type(ctx)).collect()) {
             return Err("Arguments to this function are incorrect.".to_string()); // TODO: Improve this error.
@@ -254,7 +254,7 @@ impl<'ctx> Callable<'ctx> for MemberFunction<'ctx> {
             .build_extract_value(self.val, 1, &format!("{}_callee", into_name))
             .unwrap()
             .into_pointer_value();
-        self.call_basic(ctx, self.name.clone(), fn_ptr, args_with_bound, into_name)
+        self.call_basic(ctx, &self.name, fn_ptr, args_with_bound, into_name)
     }
 
     fn args(&self) -> Vec<TypeID> {
@@ -271,11 +271,11 @@ impl<'ctx> Value<'ctx> for MemberFunction<'ctx> {
         &self,
         ctx: &LanguageContext<'ctx>,
         name: Spanned<String>,
-        into: String,
+        into: &str,
     ) -> Result<ValueEnum<'ctx>, CompileError> {
         Err(CompileError::new(
             name.span,
-            format!("Function types have no members!"),
+            &format!("Function types have no members!"),
         ))
     }
 
@@ -297,7 +297,7 @@ impl<'ctx> ValueStatic<'ctx> for MemberFunction<'ctx> {
         assert_eq!(generics.len(), 3);
         assert_eq!(generics[1].base, "Tuple");
 
-        let type_name = TypeID::new("MemberFunction".to_string(), generics.clone());
+        let type_name = TypeID::new("MemberFunction", generics.clone());
         let obj_struct = llvm_ctx.opaque_struct_type(&type_name.to_string());
         obj_struct.set_body(
             &[
@@ -310,7 +310,7 @@ impl<'ctx> ValueStatic<'ctx> for MemberFunction<'ctx> {
         let mut builder = MetatypeBuilder::new(
             ctx,
             BasicBuiltin::MemberFunction,
-            TypeID::new("MemberFunction".to_string(), generics.clone()),
+            TypeID::new("MemberFunction", generics.clone()),
             Some(obj_struct),
             AnyTypeEnum::StructType(obj_struct),
             false,
@@ -324,12 +324,12 @@ impl<'ctx> Copyable<'ctx> for MemberFunction<'ctx> {
         ctx: &LanguageContext<'ctx>,
         val: BasicValueEnum<'ctx>,
         val_type: TypeID,
-        name: String,
+        name: &str,
     ) -> Self {
         Self::new(ctx, val.into_struct_value(), val_type, name)
     }
 
-    fn from(ctx: &LanguageContext<'ctx>, other: Self, name: String) -> Self {
+    fn from(ctx: &LanguageContext<'ctx>, other: Self, name: &str) -> Self {
         Self::from_val(
             ctx,
             BasicValueEnum::StructValue(other.val),

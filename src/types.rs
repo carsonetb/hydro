@@ -32,13 +32,16 @@ pub struct TypeID {
 }
 
 impl TypeID {
-    pub fn new(base: String, generics: Vec<TypeID>) -> Self {
-        TypeID { base, generics }
+    pub fn new(base: &str, generics: Vec<TypeID>) -> Self {
+        TypeID {
+            base: base.to_string(),
+            generics,
+        }
     }
 
-    pub fn from_base(base: String) -> Self {
+    pub fn from_base(base: &str) -> Self {
         TypeID {
-            base,
+            base: base.to_string(),
             generics: Vec::<TypeID>::new(),
         }
     }
@@ -91,12 +94,12 @@ impl<'ctx> Value<'ctx> for Metatype<'ctx> {
         &self,
         ctx: &LanguageContext<'ctx>,
         name: Spanned<String>,
-        into: String,
+        into: &str,
     ) -> Result<ValueEnum<'ctx>, CompileError> {
         let member = self.members.get(&name.inner).ok_or_else(|| {
             CompileError::new(
                 name.span,
-                format!(
+                &format!(
                     "Cannot get member of name {} from type {}",
                     name.inner, self.id
                 ),
@@ -128,7 +131,7 @@ impl<'ctx> Value<'ctx> for Metatype<'ctx> {
     }
 
     fn get_type(&self, _ctx: &LanguageContext<'ctx>) -> TypeID {
-        TypeID::from_base("Type".to_string())
+        TypeID::from_base("Type")
     }
 
     fn get_value(&self) -> BasicValueEnum<'ctx> {
@@ -146,7 +149,7 @@ impl<'ctx> ValueStatic<'ctx> for Metatype<'ctx> {
         let mut builder = MetatypeBuilder::new(
             ctx,
             BasicBuiltin::Type,
-            TypeID::from_base("Type".to_string()),
+            TypeID::from_base("Type"),
             Some(ctx.types.type_struct),
             AnyTypeEnum::VoidType(ctx.types.void),
             false,
@@ -205,12 +208,15 @@ impl<'ctx> MetatypeBuilder<'ctx> {
         self.inherits.push(id.clone());
         let metatype = ctx.get(id);
         for (name, member) in metatype.members.clone() {
-            self.add_static(name, member.value);
+            self.add_static(&name, member.value);
         }
     }
 
-    pub fn add_static(&mut self, name: String, val: ValueEnum<'ctx>) {
-        self.static_values.push(BuilderStaticRepr { name, val });
+    pub fn add_static(&mut self, name: &str, val: ValueEnum<'ctx>) {
+        self.static_values.push(BuilderStaticRepr {
+            name: name.to_string(),
+            val,
+        });
     }
 
     pub fn build(

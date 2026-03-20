@@ -28,9 +28,9 @@ pub struct Field<'ctx> {
 }
 
 impl<'ctx> Field<'ctx> {
-    pub fn new(value: ValueEnum<'ctx>, name: String) -> Self {
+    pub fn new(value: ValueEnum<'ctx>, name: &str) -> Self {
         Self {
-            name,
+            name: name.to_string(),
             invalid: false,
             is_return: false,
             value,
@@ -80,7 +80,7 @@ impl<'ctx> ValueEnum<'ctx> {
         ctx: &LanguageContext<'ctx>,
         val: BasicValueEnum<'ctx>,
         typ: TypeID,
-        name: String,
+        name: &str,
     ) -> Self {
         match ctx.get(typ.clone()).base {
             BasicBuiltin::Unit => panic!(),
@@ -103,7 +103,7 @@ pub trait Value<'ctx> {
         &self,
         ctx: &LanguageContext<'ctx>,
         name: Spanned<String>,
-        into: String,
+        into: &str,
     ) -> Result<ValueEnum<'ctx>, CompileError>;
     fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeID;
     fn get_value(&self) -> BasicValueEnum<'ctx>;
@@ -122,15 +122,15 @@ pub trait Copyable<'ctx>: Value<'ctx> {
         ctx: &LanguageContext<'ctx>,
         val: BasicValueEnum<'ctx>,
         val_type: TypeID,
-        name: String,
+        name: &str,
     ) -> Self;
 
-    fn from(ctx: &LanguageContext<'ctx>, other: Self, name: String) -> Self;
+    fn from(ctx: &LanguageContext<'ctx>, other: Self, name: &str) -> Self;
 }
 
 pub trait Literal<'ctx> {
     type LiteralType;
     type Repr: AnyValue<'ctx>;
-    fn from_literal(ctx: &LanguageContext<'ctx>, literal: Self::LiteralType, name: String) -> Self;
-    fn raw(&self, ctx: &LanguageContext<'ctx>, name: String) -> Self::Repr;
+    fn from_literal(ctx: &LanguageContext<'ctx>, literal: Self::LiteralType, name: &str) -> Self;
+    fn raw(&self, ctx: &LanguageContext<'ctx>, name: &str) -> Self::Repr;
 }

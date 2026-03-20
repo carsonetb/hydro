@@ -30,17 +30,15 @@ use crate::{
 pub struct CompileError(Vec<(SimpleSpan, String)>);
 
 impl CompileError {
-    pub fn new(span: SimpleSpan, reason: String) -> Self {
-        Self(vec![(span, reason)])
+    pub fn new(span: SimpleSpan, reason: &str) -> Self {
+        Self(vec![(span, reason.to_string())])
     }
 
-    pub fn with_notes(
-        msg_span: SimpleSpan,
-        msg: String,
-        note_span: SimpleSpan,
-        note: String,
-    ) -> Self {
-        Self(vec![(msg_span, msg), (note_span, note)])
+    pub fn with_notes(msg_span: SimpleSpan, msg: &str, note_span: SimpleSpan, note: &str) -> Self {
+        Self(vec![
+            (msg_span, msg.to_string()),
+            (note_span, note.to_string()),
+        ])
     }
 
     pub fn message_span(&self) -> SimpleSpan {
@@ -59,7 +57,7 @@ impl CompileError {
 pub fn gen_literal<'ctx>(
     ctx: &LanguageContext<'ctx>,
     literal: &ParseLiteral,
-    name: String,
+    name: &str,
 ) -> ValueEnum<'ctx> {
     match literal {
         ParseLiteral::Error(_) => panic!(),
@@ -72,7 +70,7 @@ pub fn gen_literal<'ctx>(
 pub fn gen_atom<'ctx>(
     ctx: &LanguageContext<'ctx>,
     atom: &Atom,
-    into_name: String,
+    into_name: &str,
 ) -> Result<ValueEnum<'ctx>, CompileError> {
     match atom {
         Atom::Literal(literal) => Ok(gen_literal(ctx, literal, into_name)),
@@ -84,19 +82,19 @@ pub fn gen_atom<'ctx>(
 pub fn gen_primary<'ctx>(
     ctx: &LanguageContext<'ctx>,
     prim: &Primary,
-    into_name: String,
+    into_name: &str,
 ) -> Result<ValueEnum<'ctx>, CompileError> {
     match prim {
         Primary::Atom(atom) => gen_atom(ctx, atom, into_name),
         Primary::Call { on, generics, args } => {
-            let on_eval = gen_primary(ctx, on, format!("{}_callee", into_name))?;
+            let on_eval = gen_primary(ctx, on, &format!("{}_callee", into_name))?;
             let on_typ = on_eval.get_type(ctx);
             let mut args_eval = Vec::<ValueEnum<'ctx>>::new();
             for (i, arg) in args.iter().enumerate() {
                 args_eval.push(gen_expr(
                     ctx,
                     arg,
-                    format!("{}_callee_arg{}", into_name, i),
+                    &format!("{}_callee_arg{}", into_name, i),
                 )?);
             }
             Ok((if on_eval.clone().try_as_function().is_some() {
@@ -112,13 +110,13 @@ pub fn gen_primary<'ctx>(
             } else {
                 Err(CompileError::new(
                     on.span,
-                    format!("Expression does not evaluate to a Function type, instead it is of type `{}`", on_typ),
+                    &format!("Expression does not evaluate to a Function type, instead it is of type `{}`", on_typ),
                 ))
             })?
-            .map_err(|err| CompileError::new(on.span, err))?)
+            .map_err(|err| CompileError::new(on.span, &err))?)
         }
         Primary::Member { on, name } => {
-            let on = gen_primary(ctx, on, format!("{}_on", into_name)).unwrap();
+            let on = gen_primary(ctx, on, &format!("{}_on", into_name)).unwrap();
             on.member(ctx, name.clone(), into_name)
         }
     }
@@ -127,13 +125,13 @@ pub fn gen_primary<'ctx>(
 pub fn gen_expr<'ctx>(
     ctx: &LanguageContext<'ctx>,
     expr: &Expr,
-    into_name: String,
+    into_name: &str,
 ) -> Result<ValueEnum<'ctx>, CompileError> {
     match expr {
         Expr::Unary(op, right) => todo!(),
         Expr::Binary(left, op, right) => {
-            let left_val = gen_expr(ctx, left, format!("{}_left", into_name))?;
-            let right_val = gen_expr(ctx, right, format!("{}_right", into_name))?;
+            let left_val = gen_expr(ctx, left, &format!("{}_left", into_name))?;
+            let right_val = gen_expr(ctx, right, &format!("{}_right", into_name))?;
             let left_type = left_val.get_type(ctx);
             let right_type = right_val.get_type(ctx);
             if left_type != right_type {
@@ -153,15 +151,15 @@ pub fn gen_expr<'ctx>(
                 ]));
             }
             let op_fn = left_val
-                .member(ctx, op.clone(), op.inner.clone())?
+                .member(ctx, op.clone(), &op.inner)?
                 .try_as_function()
                 .unwrap();
             op_fn.verify(vec![left_type, right_type]);
             Ok(op_fn
-                .call(ctx, vec![left_val, right_val], into_name)
-                .map_err(|err| CompileError::new(op.span, err)))?
+                .call(ctx, vec![left_val, right_val], &into_name)
+                .map_err(|err| CompileError::new(op.span, &err)))?
         }
-        Expr::Primary(primary) => gen_primary(ctx, primary, into_name),
+        Expr::Primary(primary) => gen_primary(ctx, primary, &into_name),
     }
 }
 
@@ -172,7 +170,7 @@ pub fn gen_stmt<'ctx>(
     match stmt {
         Stmt::Error(_) => panic!(),
         Stmt::VarDecl { name, typ, value } => {
-            let eval = gen_expr(ctx, value.as_ref(), name.inner.clone());
+            let eval = gen_expr(ctx, value.as_ref(), &name.inner);
             if eval.is_err() {
                 return Err(eval.unwrap_err());
             }
@@ -181,34 +179,34 @@ pub fn gen_stmt<'ctx>(
             if typ.is_some() && eval_type != typ.as_ref().unwrap().to_typeid().name() {
                 return Err(CompileError::with_notes(
                     value.span,
-                    format!(
+                    &format!(
                         "Expression evaluates to type `{}`, which is not expected.",
                         eval_type
                     ),
                     typ.as_ref().unwrap().span,
-                    format!(
+                    &format!(
                         "An expected type was specified here. Compilation will continue as if this was `{}`",
                         eval_type
                     ),
                 ));
             }
-            let field = Field::new(eval, name.inner.clone());
-            ctx.add_field(name.inner.clone(), field);
+            let field = Field::new(eval, &name.inner);
+            ctx.add_field(&name.inner, field);
             Ok(None)
         }
         Stmt::VarSet { name, value } => {
-            let expr = gen_expr(ctx, value.as_ref(), name.inner.clone())?;
+            let expr = gen_expr(ctx, value.as_ref(), &name.inner)?;
             let field = ctx.get_field(name.clone())?;
             field.release(ctx);
             ctx.get_field_mut(name.clone())?.value = expr;
             Ok(None)
         }
-        Stmt::Expr(expr) => match gen_expr(ctx, expr.as_ref(), "UNUSED".to_string()) {
+        Stmt::Expr(expr) => match gen_expr(ctx, expr.as_ref(), "UNUSED") {
             Ok(_) => Ok(None),
             Err(err) => Err(err),
         },
         Stmt::Return(expr) => match expr {
-            Some(expr) => gen_expr(ctx, expr, "RETURN".to_string()).map(|val| Some(val)),
+            Some(expr) => gen_expr(ctx, expr, "RETURN").map(|val| Some(val)),
             None => Ok(Some(ValueEnum::Unit(Unit {}))),
         },
     }
@@ -231,7 +229,7 @@ pub fn gen_decl_pre<'ctx>(
             if scope.contains_key(&name.inner) {
                 return Err(CompileError::new(
                     name.span,
-                    "A function with this name already exists.".to_string(),
+                    "A function with this name already exists.",
                 ));
             }
             for (name, typ) in params {
@@ -260,23 +258,23 @@ pub fn gen_decl_pre<'ctx>(
                 ctx.module
                     .add_function(&format!("User__{}", name.inner), llvm_function_type, None);
             let function_type = TypeID::new(
-                "Function".to_string(),
+                "Function",
                 vec![
                     TypeID::new(
-                        "Tuple".to_string(),
+                        "Tuple",
                         params.iter().map(|(_, typ)| typ.to_typeid()).collect(),
                     ),
                     if returns.is_some() {
                         returns.as_ref().unwrap().to_typeid()
                     } else {
-                        TypeID::from_base("Unit".to_string())
+                        TypeID::from_base("Unit")
                     },
                 ],
             );
             let function = Function::from_function(llvm_ctx, ctx, llvm_function, function_type);
             ctx.add_field(
-                name.inner.clone(),
-                Field::new(ValueEnum::Function(function), name.inner.clone()),
+                &name.inner,
+                Field::new(ValueEnum::Function(function), &name.inner),
             );
 
             Ok(())
@@ -300,7 +298,7 @@ pub fn gen_decl<'ctx>(
             let returns_spanned = returns;
             let returns = match returns {
                 Some(returns) => returns.to_typeid(),
-                None => TypeID::from_base("Unit".to_string()),
+                None => TypeID::from_base("Unit"),
             };
 
             let name = name.span.make_wrapped(format!("User__{}", name.inner));
@@ -312,8 +310,8 @@ pub fn gen_decl<'ctx>(
 
             for ((name, typ), value) in params.iter().zip(function.get_params()) {
                 value.set_name(&name.inner);
-                let value = ValueEnum::from_val(ctx, value, typ.to_typeid(), name.inner.clone());
-                ctx.add_field(name.inner.clone(), Field::new(value, name.inner.clone()));
+                let value = ValueEnum::from_val(ctx, value, typ.to_typeid(), &name.inner);
+                ctx.add_field(&name.inner, Field::new(value, &name.inner));
             }
 
             let mut returned = false;
@@ -323,7 +321,7 @@ pub fn gen_decl<'ctx>(
                         if ret.get_type(ctx) != returns {
                             let mut out = CompileError::new(
                                 stmt.span,
-                                format!("Incorrect return type, expected `{}`", returns),
+                                &format!("Incorrect return type, expected `{}`", returns),
                             );
                             if returns_spanned.is_some() {
                                 out.0.push((
@@ -348,12 +346,12 @@ pub fn gen_decl<'ctx>(
             }
 
             if !returned {
-                if returns != TypeID::from_base("Unit".to_string()) {
+                if returns != TypeID::from_base("Unit") {
                     return Err(CompileError::with_notes(
                         body.span,
-                        "Function does not always return.".to_string(),
+                        "Function does not always return.",
                         returns_spanned.as_ref().unwrap().span,
-                        "Return type specified here.".to_string(),
+                        "Return type specified here.",
                     ));
                 }
                 ctx.builder.build_return(None);
@@ -400,15 +398,14 @@ pub fn do_codegen<'ctx>(
         }
     }
 
-    let main = ctx.get_field_nospan("main".to_string());
+    let main = ctx.get_field_nospan("main");
     match main {
-        Some(main) => {
-            main.value
-                .clone()
-                .try_as_function()
-                .unwrap()
-                .call(ctx, vec![], "res".to_string())
-        }
+        Some(main) => main
+            .value
+            .clone()
+            .try_as_function()
+            .unwrap()
+            .call(ctx, vec![], "res"),
         None => panic!("Requires a main() function."),
     };
 

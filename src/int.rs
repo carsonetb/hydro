@@ -32,7 +32,7 @@ impl<'ctx> Int<'ctx> {
         llvm_ctx: &'ctx Context,
         ctx: &LanguageContext<'ctx>,
         op_builder: impl Fn(IntValue<'ctx>, IntValue<'ctx>) -> IntValue<'ctx>,
-        op_name: String,
+        op_name: &str,
         boolean: bool,
     ) -> FunctionValue<'ctx> {
         let ret = if boolean {
@@ -66,28 +66,25 @@ impl<'ctx> Value<'ctx> for Int<'ctx> {
         &self,
         ctx: &LanguageContext<'ctx>,
         name: Spanned<String>,
-        into: String,
+        into: &str,
     ) -> Result<ValueEnum<'ctx>, CompileError> {
         let bin_type = TypeID::new(
-            "Function".to_string(),
+            "Function",
             vec![
-                TypeID::new(
-                    "Tuple".to_string(),
-                    vec![TypeID::from_base("Int".to_string()); 2],
-                ),
-                TypeID::from_base("Int".to_string()),
+                TypeID::new("Tuple", vec![TypeID::from_base("Int"); 2]),
+                TypeID::from_base("Int"),
             ],
         );
         let mut cmp_type = bin_type.clone();
-        cmp_type.generics[1] = TypeID::from_base("Bool".to_string());
+        cmp_type.generics[1] = TypeID::from_base("Bool");
 
-        let int_type = TypeID::from_base("Int".to_string());
+        let int_type = TypeID::from_base("Int");
         let to_string_type = TypeID::new(
-            "MemberFunction".to_string(),
+            "MemberFunction",
             vec![
                 int_type.clone(),
-                TypeID::new("Tuple".to_string(), vec![]),
-                TypeID::from_base("String".to_string()),
+                TypeID::new("Tuple", vec![]),
+                TypeID::from_base("String"),
             ],
         );
 
@@ -101,7 +98,7 @@ impl<'ctx> Value<'ctx> for Int<'ctx> {
                         .as_global_value()
                         .as_pointer_value(),
                     $ty,
-                    $op_name.to_string(),
+                    $op_name,
                 )))
             };
         }
@@ -141,18 +138,18 @@ impl<'ctx> Value<'ctx> for Int<'ctx> {
                     ctx,
                     bound_struct,
                     to_string_type,
-                    "Int.to_string".to_string(),
+                    "Int.to_string",
                 )))
             }
             _ => Err(CompileError::new(
                 name.span,
-                format!("Type `Int` has no `{}` member.", name.inner),
+                &format!("Type `Int` has no `{}` member.", name.inner),
             )),
         }
     }
 
     fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeID {
-        TypeID::from_base("Int".to_string())
+        TypeID::from_base("Int")
     }
 
     fn get_value(&self) -> BasicValueEnum<'ctx> {
@@ -180,7 +177,7 @@ impl<'ctx> ValueStatic<'ctx> for Int<'ctx> {
                             .as_any_value_enum()
                             .into_int_value()
                     },
-                    $op_name_str.to_string(),
+                    $op_name_str,
                     false,
                 )
             };
@@ -198,13 +195,13 @@ impl<'ctx> ValueStatic<'ctx> for Int<'ctx> {
                             .as_any_value_enum()
                             .into_int_value()
                     },
-                    $op_name_str.to_string(),
+                    $op_name_str,
                     true,
                 )
             };
         }
 
-        let typeid = TypeID::from_base("Int".to_string());
+        let typeid = TypeID::from_base("Int");
         let mut builder = MetatypeBuilder::new(
             ctx,
             BasicBuiltin::Int,
@@ -215,17 +212,17 @@ impl<'ctx> ValueStatic<'ctx> for Int<'ctx> {
         );
 
         let bin_type = TypeID::new(
-            "Function".to_string(),
+            "Function",
             vec![
-                TypeID::new("Tuple".to_string(), vec![typeid.clone(); 2]),
+                TypeID::new("Tuple", vec![typeid.clone(); 2]),
                 typeid.clone(),
             ],
         );
         let cmp_type = TypeID::new(
-            "Function".to_string(),
+            "Function",
             vec![
-                TypeID::new("Tuple".to_string(), vec![typeid.clone(); 2]),
-                TypeID::from_base("Bool".to_string()),
+                TypeID::new("Tuple", vec![typeid.clone(); 2]),
+                TypeID::from_base("Bool"),
             ],
         );
         let add_llvm_fn = build_binop!("+", build_int_add);
@@ -244,7 +241,7 @@ impl<'ctx> ValueStatic<'ctx> for Int<'ctx> {
                     .as_any_value_enum()
                     .into_int_value()
             },
-            ">>".to_string(),
+            ">>",
             false,
         );
         let bwa_llvm_fn = build_binop!("&", build_and);
@@ -272,22 +269,22 @@ impl<'ctx> ValueStatic<'ctx> for Int<'ctx> {
         let geq_fn = Function::from_function(llvm_ctx, ctx, geq_llvm_fn, cmp_type.clone());
         let eqa_fn = Function::from_function(llvm_ctx, ctx, eqa_llvm_fn, cmp_type.clone());
         let neq_fn = Function::from_function(llvm_ctx, ctx, neq_llvm_fn, cmp_type.clone());
-        builder.add_static("+".to_string(), ValueEnum::Function(add_fn));
-        builder.add_static("-".to_string(), ValueEnum::Function(sub_fn));
-        builder.add_static("*".to_string(), ValueEnum::Function(mul_fn));
-        builder.add_static("/".to_string(), ValueEnum::Function(div_fn));
-        builder.add_static("%".to_string(), ValueEnum::Function(mod_fn));
-        builder.add_static("<<".to_string(), ValueEnum::Function(lsh_fn));
-        builder.add_static(">>".to_string(), ValueEnum::Function(rsh_fn));
-        builder.add_static("&".to_string(), ValueEnum::Function(bwa_fn));
-        builder.add_static("^".to_string(), ValueEnum::Function(bxo_fn));
-        builder.add_static("|".to_string(), ValueEnum::Function(bwo_fn));
-        builder.add_static("<".to_string(), ValueEnum::Function(les_fn));
-        builder.add_static("<=".to_string(), ValueEnum::Function(leq_fn));
-        builder.add_static(">".to_string(), ValueEnum::Function(gre_fn));
-        builder.add_static(">=".to_string(), ValueEnum::Function(geq_fn));
-        builder.add_static("==".to_string(), ValueEnum::Function(eqa_fn));
-        builder.add_static("!=".to_string(), ValueEnum::Function(neq_fn));
+        builder.add_static("+", ValueEnum::Function(add_fn));
+        builder.add_static("-", ValueEnum::Function(sub_fn));
+        builder.add_static("*", ValueEnum::Function(mul_fn));
+        builder.add_static("/", ValueEnum::Function(div_fn));
+        builder.add_static("%", ValueEnum::Function(mod_fn));
+        builder.add_static("<<", ValueEnum::Function(lsh_fn));
+        builder.add_static(">>", ValueEnum::Function(rsh_fn));
+        builder.add_static("&", ValueEnum::Function(bwa_fn));
+        builder.add_static("^", ValueEnum::Function(bxo_fn));
+        builder.add_static("|", ValueEnum::Function(bwo_fn));
+        builder.add_static("<", ValueEnum::Function(les_fn));
+        builder.add_static("<=", ValueEnum::Function(leq_fn));
+        builder.add_static(">", ValueEnum::Function(gre_fn));
+        builder.add_static(">=", ValueEnum::Function(geq_fn));
+        builder.add_static("==", ValueEnum::Function(eqa_fn));
+        builder.add_static("!=", ValueEnum::Function(neq_fn));
 
         let sprintf_type = ctx.types.void.fn_type(
             &vec![BasicMetadataTypeEnum::PointerType(ctx.types.ptr); 2],
@@ -305,12 +302,8 @@ impl<'ctx> ValueStatic<'ctx> for Int<'ctx> {
             .types
             .ptr
             .fn_type(&[BasicMetadataTypeEnum::IntType(ctx.types.int)], false);
-        let to_string_llvm_fn = ctx
-            .module
-            .add_function("Int.to_string", to_string_llvm_type, None);
-        let entry = llvm_ctx.append_basic_block(to_string_llvm_fn, "entry");
-        let old_block = ctx.builder.get_insert_block().unwrap();
-        ctx.builder.position_at_end(entry);
+        let to_string_llvm_fn = ctx.add_function("Int.to_string", to_string_llvm_type);
+        let old_block = ctx.begin_function(to_string_llvm_fn);
 
         let format = llvm_ctx.const_string(b"%d", true);
         let format_mem = ctx
@@ -319,15 +312,11 @@ impl<'ctx> ValueStatic<'ctx> for Int<'ctx> {
             .unwrap(); // TODO: Don't alloca
         ctx.builder.build_store(format_mem, format);
         let out_mem = ctx
-            .builder
-            .build_call(
+            .build_call_returns(
                 malloc_func,
                 &[BasicMetadataValueEnum::IntValue(ctx.int(48))],
                 "out_mem",
             )
-            .unwrap()
-            .try_as_basic_value()
-            .unwrap_basic()
             .into_pointer_value();
         ctx.builder.build_call(
             sprintf,
@@ -343,10 +332,7 @@ impl<'ctx> ValueStatic<'ctx> for Int<'ctx> {
             ],
             "UNUSED",
         );
-        let string_type = ctx
-            .get(TypeID::from_base("String".to_string()))
-            .obj_struct
-            .unwrap();
+        let string_type = ctx.get_struct(TypeID::from_base("String"));
         let struct_mem = ctx.builder.build_malloc(string_type, "out").unwrap();
         let dest_size = ctx
             .builder
@@ -364,11 +350,11 @@ impl<'ctx> ValueStatic<'ctx> for Int<'ctx> {
         builder.build(llvm_ctx, ctx, generics);
 
         let to_string_type = TypeID::new(
-            "MemberFunction".to_string(),
+            "MemberFunction",
             vec![
-                TypeID::from_base("Int".to_string()),
-                TypeID::new("Tuple".to_string(), vec![]),
-                TypeID::from_base("String".to_string()),
+                TypeID::from_base("Int"),
+                TypeID::new("Tuple", vec![]),
+                TypeID::from_base("String"),
             ],
         );
         ctx.get_with_gen_ext(to_string_type.clone());
@@ -380,12 +366,12 @@ impl<'ctx> Copyable<'ctx> for Int<'ctx> {
         ctx: &LanguageContext<'ctx>,
         val: BasicValueEnum<'ctx>,
         _ptr_type: TypeID,
-        name: String,
+        name: &str,
     ) -> Self {
         Int::new(val.into_int_value())
     }
 
-    fn from(ctx: &LanguageContext<'ctx>, other: Self, name: String) -> Self {
+    fn from(ctx: &LanguageContext<'ctx>, other: Self, name: &str) -> Self {
         Int::from_val(ctx, other.get_value(), other.get_type(ctx), name)
     }
 }
@@ -394,11 +380,11 @@ impl<'ctx> Literal<'ctx> for Int<'ctx> {
     type LiteralType = u32;
     type Repr = IntValue<'ctx>;
 
-    fn from_literal(ctx: &LanguageContext<'ctx>, value: Self::LiteralType, _name: String) -> Self {
+    fn from_literal(ctx: &LanguageContext<'ctx>, value: Self::LiteralType, _name: &str) -> Self {
         Int::new(ctx.int(value as u64))
     }
 
-    fn raw(&self, _ctx: &LanguageContext<'ctx>, _name: String) -> Self::Repr {
+    fn raw(&self, _ctx: &LanguageContext<'ctx>, _name: &str) -> Self::Repr {
         self.val
     }
 }

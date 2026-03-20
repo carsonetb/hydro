@@ -29,7 +29,7 @@ impl<'ctx> Bool<'ctx> {
         llvm_ctx: &'ctx Context,
         ctx: &LanguageContext<'ctx>,
         op_builder: impl Fn(IntValue<'ctx>, IntValue<'ctx>) -> IntValue<'ctx>,
-        op_name: String,
+        op_name: &str,
     ) -> FunctionValue<'ctx> {
         let add_llvm_type = ctx
             .types
@@ -54,13 +54,10 @@ impl<'ctx> Bool<'ctx> {
     }
 
     fn cmp_type() -> TypeID {
-        let typeid = TypeID::from_base("Bool".to_string());
+        let typeid = TypeID::from_base("Bool");
         TypeID::new(
-            "Function".to_string(),
-            vec![
-                TypeID::new("Tuple".to_string(), vec![typeid.clone(); 2]),
-                typeid,
-            ],
+            "Function",
+            vec![TypeID::new("Tuple", vec![typeid.clone(); 2]), typeid],
         )
     }
 }
@@ -70,9 +67,9 @@ impl<'ctx> Value<'ctx> for Bool<'ctx> {
         &self,
         ctx: &LanguageContext<'ctx>,
         name: Spanned<String>,
-        into: String,
+        into: &str,
     ) -> Result<ValueEnum<'ctx>, CompileError> {
-        let typeid = TypeID::from_base("Bool".to_string());
+        let typeid = TypeID::from_base("Bool");
 
         macro_rules! op_fun_wrapper {
             ($op_name:expr, $fn_name:expr) => {
@@ -84,7 +81,7 @@ impl<'ctx> Value<'ctx> for Bool<'ctx> {
                         .as_global_value()
                         .as_pointer_value(),
                     Self::cmp_type(),
-                    $op_name.to_string(),
+                    $op_name,
                 )))
             };
         }
@@ -96,13 +93,13 @@ impl<'ctx> Value<'ctx> for Bool<'ctx> {
             "&&" => op_fun_wrapper!("&&", "Int.&&"),
             _ => Err(CompileError::new(
                 name.span,
-                format!("Type `Bool` has no `{}` operator.", name.inner),
+                &format!("Type `Bool` has no `{}` operator.", name.inner),
             )),
         }
     }
 
     fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeID {
-        TypeID::from_base("Bool".to_string())
+        TypeID::from_base("Bool")
     }
 
     fn get_value(&self) -> BasicValueEnum<'ctx> {
@@ -130,7 +127,7 @@ impl<'ctx> ValueStatic<'ctx> for Bool<'ctx> {
                             .as_any_value_enum()
                             .into_int_value()
                     },
-                    $op_name_str.to_string(),
+                    $op_name_str,
                 )
             };
         }
@@ -145,12 +142,12 @@ impl<'ctx> ValueStatic<'ctx> for Bool<'ctx> {
                             .build_int_compare($predicate, left, right, "product")
                             .unwrap()
                     },
-                    $op_name_str.to_string(),
+                    $op_name_str,
                 )
             };
         }
 
-        let typeid = TypeID::from_base("Bool".to_string());
+        let typeid = TypeID::from_base("Bool");
         let mut builder = MetatypeBuilder::new(
             ctx,
             BasicBuiltin::Bool,
@@ -168,10 +165,10 @@ impl<'ctx> ValueStatic<'ctx> for Bool<'ctx> {
         let neq_fn = Function::from_function(llvm_ctx, ctx, neq_llvm_fn, Self::cmp_type());
         let or_fn = Function::from_function(llvm_ctx, ctx, or_llvm_fn, Self::cmp_type());
         let and_fn = Function::from_function(llvm_ctx, ctx, and_llvm_fn, Self::cmp_type());
-        builder.add_static("==".to_string(), ValueEnum::Function(eqa_fn));
-        builder.add_static("!=".to_string(), ValueEnum::Function(neq_fn));
-        builder.add_static("||".to_string(), ValueEnum::Function(or_fn));
-        builder.add_static("&&".to_string(), ValueEnum::Function(and_fn));
+        builder.add_static("==", ValueEnum::Function(eqa_fn));
+        builder.add_static("!=", ValueEnum::Function(neq_fn));
+        builder.add_static("||", ValueEnum::Function(or_fn));
+        builder.add_static("&&", ValueEnum::Function(and_fn));
 
         builder.build(llvm_ctx, ctx, generics);
     }
@@ -182,12 +179,12 @@ impl<'ctx> Copyable<'ctx> for Bool<'ctx> {
         ctx: &LanguageContext<'ctx>,
         val: BasicValueEnum<'ctx>,
         val_type: TypeID,
-        name: String,
+        name: &str,
     ) -> Self {
         Bool::new(val.into_int_value())
     }
 
-    fn from(ctx: &LanguageContext<'ctx>, other: Self, name: String) -> Self {
+    fn from(ctx: &LanguageContext<'ctx>, other: Self, name: &str) -> Self {
         Bool::from_val(ctx, other.get_value(), other.get_type(ctx), name)
     }
 }
@@ -196,11 +193,11 @@ impl<'ctx> Literal<'ctx> for Bool<'ctx> {
     type LiteralType = bool;
     type Repr = IntValue<'ctx>;
 
-    fn from_literal(ctx: &LanguageContext<'ctx>, literal: Self::LiteralType, name: String) -> Self {
+    fn from_literal(ctx: &LanguageContext<'ctx>, literal: Self::LiteralType, name: &str) -> Self {
         Bool::new(ctx.bool(literal))
     }
 
-    fn raw(&self, ctx: &LanguageContext<'ctx>, name: String) -> Self::Repr {
+    fn raw(&self, ctx: &LanguageContext<'ctx>, name: &str) -> Self::Repr {
         self.val
     }
 }

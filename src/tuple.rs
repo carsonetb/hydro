@@ -25,12 +25,12 @@ impl<'ctx> Value<'ctx> for Tuple<'ctx> {
         &self,
         ctx: &LanguageContext<'ctx>,
         name: Spanned<String>,
-        into: String,
+        into: &str,
     ) -> Result<ValueEnum<'ctx>, CompileError> {
         let as_int = name.parse::<usize>().map_err(|_| {
             CompileError::new(
                 name.span,
-                format!(
+                &format!(
                     "`{}` has no member `{}`. All Tuple member must be a number.",
                     self.get_type(ctx),
                     name.inner
@@ -48,7 +48,7 @@ impl<'ctx> Value<'ctx> for Tuple<'ctx> {
             .map_err(|_| {
                 CompileError::new(
                     name.span,
-                    format!(
+                    &format!(
                         "`{}` does not have `{}` items.",
                         self.get_type(ctx),
                         as_int + 1
@@ -86,7 +86,7 @@ impl<'ctx> ValueStatic<'ctx> for Tuple<'ctx> {
         ctx: &mut LanguageContext<'ctx>,
         generics: Vec<TypeID>,
     ) {
-        let type_name = TypeID::new("Tuple".to_string(), generics.clone());
+        let type_name = TypeID::new("Tuple", generics.clone());
         let obj_struct = llvm_ctx.opaque_struct_type(&type_name.name().as_str());
         let body: Vec<BasicTypeEnum<'ctx>> = generics
             .iter()
@@ -97,7 +97,7 @@ impl<'ctx> ValueStatic<'ctx> for Tuple<'ctx> {
         let mut builder = MetatypeBuilder::new(
             ctx,
             BasicBuiltin::Function,
-            TypeID::from_base("Function".to_string()),
+            TypeID::from_base("Function"),
             Some(obj_struct),
             AnyTypeEnum::PointerType(ctx.types.ptr),
             false,
@@ -111,12 +111,12 @@ impl<'ctx> Copyable<'ctx> for Tuple<'ctx> {
         ctx: &LanguageContext<'ctx>,
         val: BasicValueEnum<'ctx>,
         val_typ: TypeID,
-        name: String,
+        name: &str,
     ) -> Self {
         todo!()
     }
 
-    fn from(ctx: &LanguageContext<'ctx>, other: Self, name: String) -> Self {
+    fn from(ctx: &LanguageContext<'ctx>, other: Self, name: &str) -> Self {
         todo!()
     }
 }

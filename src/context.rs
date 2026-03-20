@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use chumsky::span::{Spanned, WrappingSpan};
 use inkwell::{
     AddressSpace, OptimizationLevel,
+    basic_block::BasicBlock,
     builder::Builder,
     context::Context,
     module::Module,
@@ -11,7 +12,7 @@ use inkwell::{
         AnyTypeEnum, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FloatType, FunctionType,
         IntType, PointerType, StructType, VoidType,
     },
-    values::{BasicMetadataValueEnum, IntValue},
+    values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue, IntValue},
 };
 
 use crate::{
@@ -38,7 +39,7 @@ pub struct LanguageContext<'ctx> {
     pub machine: TargetMachine,
     pub scope: Scope<'ctx>,
     pub errors: Vec<CompileError>,
-    generic_gens: HashMap<String, fn(&'ctx Context, &mut LanguageContext<'ctx>, Vec<TypeID>)>,
+    generic_gens: HashMap<&'ctx str, fn(&'ctx Context, &mut LanguageContext<'ctx>, Vec<TypeID>)>,
 }
 
 impl<'ctx> LanguageContext<'ctx> {
@@ -69,7 +70,7 @@ impl<'ctx> LanguageContext<'ctx> {
             scope: Scope::new(),
             errors: Vec::<CompileError>::new(),
             generic_gens: HashMap::<
-                String,
+                &'ctx str,
                 fn(&'ctx Context, &mut LanguageContext<'ctx>, Vec<TypeID>),
             >::new(),
         }
@@ -81,7 +82,7 @@ impl<'ctx> LanguageContext<'ctx> {
 
     pub fn init_metatypes(&mut self, context: &'ctx Context) {
         Str::build_metatype(context, self, vec![]);
-        let string_metatype = self.get(TypeID::from_base("String".to_string()));
+        let string_metatype = self.get(TypeID::from_base("String"));
         let print_llvm_type = self.types.void.fn_type(
             &[BasicMetadataTypeEnum::PointerType(
                 string_metatype.storage_type.into_pointer_type(),
@@ -119,27 +120,20 @@ impl<'ctx> LanguageContext<'ctx> {
         self.builder.position_at_end(old_block);
 
         let print_type = TypeID::new(
-            "Function".to_string(),
+            "Function",
             vec![
-                TypeID::new(
-                    "Tuple".to_string(),
-                    vec![TypeID::from_base("String".to_string())],
-                ),
-                TypeID::from_base("Unit".to_string()),
+                TypeID::new("Tuple", vec![TypeID::from_base("String")]),
+                TypeID::from_base("Unit"),
             ],
         );
         let print = Function::from_function(context, self, print_llvm_fn, print_type);
-        self.add_field(
-            "print".to_string(),
-            Field::new(ValueEnum::Function(print), "print".to_string()),
-        );
+        self.add_field("print", Field::new(ValueEnum::Function(print), "print"));
 
         self.generic_gens
-            .insert("Function".to_string(), Function::build_metatype);
+            .insert("Function", Function::build_metatype);
         self.generic_gens
-            .insert("MemberFunction".to_string(), MemberFunction::build_metatype);
-        self.generic_gens
-            .insert("Tuple".to_string(), Tuple::build_metatype);
+            .insert("MemberFunction", MemberFunction::build_metatype);
+        self.generic_gens.insert("Tuple", Tuple::build_metatype);
         Unit::build_metatype(context, self, vec![]);
         Bool::build_metatype(context, self, vec![]);
         Int::build_metatype(context, self, vec![]);
@@ -153,7 +147,7 @@ impl<'ctx> LanguageContext<'ctx> {
     pub fn validate_id(&self, id: TypeID) {
         self.metatypes
             .get(&id)
-            .expect(format!("Could not validate that type {id} exists!").as_str());
+            .expect(&format!("Could not validate that type {id} exists!"));
     }
 
     pub fn get_with_gen(
@@ -164,11 +158,8 @@ impl<'ctx> LanguageContext<'ctx> {
         if self.metatypes.contains_key(&id.clone()) {
             self.get_err(id)
         } else {
-            self.generic_gens.get(&id.base).ok_or_else(|| {
-                CompileError::new(
-                    id.span,
-                    "Could not find type in the current scope.".to_string(),
-                )
+            self.generic_gens.get(id.base.as_str()).ok_or_else(|| {
+                CompileError::new(id.span, "Could not find type in the current scope.")
             })?(llvm_ctx, self, id.generics.clone());
             self.get_err(id)
         }
@@ -178,7 +169,11 @@ impl<'ctx> LanguageContext<'ctx> {
         if self.metatypes.contains_key(&id.clone()) {
             self.get(id)
         } else {
-            self.generic_gens.get(&id.base).unwrap()(self.context, self, id.generics.clone());
+            self.generic_gens.get(id.base.as_str()).unwrap()(
+                self.context,
+                self,
+                id.generics.clone(),
+            );
             self.get(id)
         }
     }
@@ -195,7 +190,7 @@ impl<'ctx> LanguageContext<'ctx> {
         } else {
             Err(CompileError::new(
                 id.span,
-                "Could not find type in the current scope.".to_string(),
+                "Could not find type in the current scope.",
             ))
         }
     }
@@ -208,7 +203,7 @@ impl<'ctx> LanguageContext<'ctx> {
     }
 
     pub fn string(&self) -> &Metatype<'ctx> {
-        self.get(TypeID::from_base("String".to_string()))
+        self.get(TypeID::from_base("String"))
     }
 
     pub fn int(&self, value: u64) -> IntValue<'ctx> {
@@ -247,9 +242,9 @@ impl<'ctx> LanguageContext<'ctx> {
         self.get(id).is_refcounted
     }
 
-    pub fn add_field(&mut self, name: String, field: Field<'ctx>) {
+    pub fn add_field(&mut self, name: &str, field: Field<'ctx>) {
         let current = self.current_scope_mut();
-        current.insert(name, field);
+        current.insert(name.to_string(), field);
     }
 
     pub fn push_scope(&mut self) {
@@ -278,18 +273,18 @@ impl<'ctx> LanguageContext<'ctx> {
     }
 
     pub fn get_field(&self, name: Spanned<String>) -> Result<&Field<'ctx>, CompileError> {
-        self.get_field_nospan(name.inner.clone()).ok_or_else(|| {
+        self.get_field_nospan(&name.inner).ok_or_else(|| {
             CompileError::new(
                 name.span,
-                format!("No field named {} in current scope.", name.inner),
+                &format!("No field named {} in current scope.", name.inner),
             )
         })
     }
 
-    pub fn get_field_nospan(&self, name: String) -> Option<&Field<'ctx>> {
+    pub fn get_field_nospan(&self, name: &str) -> Option<&Field<'ctx>> {
         for scope in self.scope.iter().rev() {
-            if scope.contains_key(&name.clone()) {
-                return Some(scope.get(&name.clone()).unwrap());
+            if scope.contains_key(name) {
+                return Some(scope.get(name).unwrap());
             }
         }
         None
@@ -306,9 +301,35 @@ impl<'ctx> LanguageContext<'ctx> {
         }
         Err(CompileError::new(
             name.span,
-            format!("No field named {} in current scope.", name.inner),
+            &format!("No field named {} in current scope.", name.inner),
         ))
     }
+
+    pub fn add_function(&self, name: &str, typ: FunctionType<'ctx>) -> FunctionValue<'ctx> {
+        self.module.add_function(name, typ, None)
+    }
+
+    pub fn begin_function(&self, function: FunctionValue<'ctx>) -> BasicBlock<'ctx> {
+        let entry = self.context.append_basic_block(function, "entry");
+        let old_block = self.builder.get_insert_block().unwrap();
+        self.builder.position_at_end(entry);
+        old_block
+    }
+
+    pub fn build_call_returns(
+        &self,
+        function: FunctionValue<'ctx>,
+        args: &[BasicMetadataValueEnum<'ctx>],
+        name: &str,
+    ) -> BasicValueEnum<'ctx> {
+        self.builder
+            .build_call(function, args, name)
+            .unwrap()
+            .try_as_basic_value()
+            .unwrap_basic()
+    }
+
+    pub fn build_ptr_store()
 }
 
 pub struct LLVMTypes<'ctx> {

@@ -44,16 +44,16 @@ impl<'ctx> Value<'ctx> for Str<'ctx> {
         &self,
         ctx: &LanguageContext<'ctx>,
         name: Spanned<String>,
-        into: String,
+        into: &str,
     ) -> Result<ValueEnum<'ctx>, CompileError> {
         Err(CompileError::new(
             name.span,
-            format!("`String` has no member {}", name.inner),
+            &format!("`String` has no member {}", name.inner),
         ))
     }
 
     fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeID {
-        TypeID::from_base("String".to_string())
+        TypeID::from_base("String")
     }
 
     fn get_value(&self) -> BasicValueEnum<'ctx> {
@@ -78,7 +78,7 @@ impl<'ctx> ValueStatic<'ctx> for Str<'ctx> {
             false,
         );
 
-        let typeid = TypeID::from_base("String".to_string());
+        let typeid = TypeID::from_base("String");
         let mut builder = MetatypeBuilder::new(
             ctx,
             BasicBuiltin::String,
@@ -96,7 +96,7 @@ impl<'ctx> Copyable<'ctx> for Str<'ctx> {
         ctx: &LanguageContext<'ctx>,
         val: BasicValueEnum<'ctx>,
         val_type: TypeID,
-        name: String,
+        name: &str,
     ) -> Self {
         // TODO: Move this into a new function
         let ptr = val.into_pointer_value();
@@ -130,14 +130,14 @@ impl<'ctx> Copyable<'ctx> for Str<'ctx> {
         ctx.builder
             .build_memcpy(raw_dest, 1, raw_ptr, 1, size)
             .unwrap();
-        Self::new(ctx, size, raw_dest, name.as_str())
+        Self::new(ctx, size, raw_dest, name)
     }
 
-    fn from(ctx: &LanguageContext<'ctx>, other: Self, name: String) -> Self {
+    fn from(ctx: &LanguageContext<'ctx>, other: Self, name: &str) -> Self {
         Self::from_val(
             ctx,
             other.val.as_basic_value_enum(),
-            TypeID::from_base("String".to_string()),
+            TypeID::from_base("String"),
             name,
         )
     }
@@ -147,7 +147,7 @@ impl<'ctx> Literal<'ctx> for Str<'ctx> {
     type LiteralType = String;
     type Repr = PointerValue<'ctx>;
 
-    fn from_literal(ctx: &LanguageContext<'ctx>, literal: Self::LiteralType, name: String) -> Self {
+    fn from_literal(ctx: &LanguageContext<'ctx>, literal: Self::LiteralType, name: &str) -> Self {
         let const_string = ctx.context.const_string(literal.as_bytes(), true);
         let size = ctx.int(name.len() as u64 + 1);
         let array = ctx
@@ -155,10 +155,10 @@ impl<'ctx> Literal<'ctx> for Str<'ctx> {
             .build_array_malloc(const_string.get_type(), size, &name)
             .unwrap();
         ctx.builder.build_store(array, const_string);
-        Self::new(ctx, size, array, name.as_str())
+        Self::new(ctx, size, array, name)
     }
 
-    fn raw(&self, ctx: &LanguageContext<'ctx>, name: String) -> Self::Repr {
+    fn raw(&self, ctx: &LanguageContext<'ctx>, name: &str) -> Self::Repr {
         self.val
     }
 }

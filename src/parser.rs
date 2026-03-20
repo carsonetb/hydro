@@ -100,7 +100,7 @@ pub struct GenericParam {
 impl ParserType {
     pub fn to_typeid(&self) -> TypeID {
         TypeID::new(
-            self.base.inner.clone(),
+            &self.base.inner.clone(),
             self.generics.iter().map(|g| g.to_typeid()).collect(),
         )
     }
