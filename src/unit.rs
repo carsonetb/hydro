@@ -31,6 +31,10 @@ impl<'ctx> Value<'ctx> for Unit {
     fn get_value(&self) -> BasicValueEnum<'ctx> {
         panic!()
     }
+
+    fn construct_ptr(&self, ctx: &LanguageContext<'ctx>, into_name: &str) -> PointerValue<'ctx> {
+        panic!()
+    }
 }
 
 impl<'ctx> ValueStatic<'ctx> for Unit {

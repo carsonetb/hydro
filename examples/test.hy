@@ -1,8 +1,9 @@
 
 
 fn main {
-    print(105.to_string());
-    var x = 1 == 1 || 2 > test(1);
+    var array = [1, 2, 3];
+    array.push(5);
+    print(array[3].to_string());
 }
 
 fn test(x: Int) -> Int {

@@ -78,6 +78,10 @@ impl<'ctx> Value<'ctx> for Tuple<'ctx> {
     fn get_value(&self) -> BasicValueEnum<'ctx> {
         BasicValueEnum::PointerValue(self.ptr)
     }
+
+    fn construct_ptr(&self, ctx: &LanguageContext<'ctx>, into_name: &str) -> PointerValue<'ctx> {
+        todo!()
+    }
 }
 
 impl<'ctx> ValueStatic<'ctx> for Tuple<'ctx> {
@@ -117,6 +121,15 @@ impl<'ctx> Copyable<'ctx> for Tuple<'ctx> {
     }
 
     fn from(ctx: &LanguageContext<'ctx>, other: Self, name: &str) -> Self {
+        todo!()
+    }
+
+    fn from_ptr(
+        ctx: &LanguageContext<'ctx>,
+        ptr: PointerValue<'ctx>,
+        typ: TypeID,
+        into_name: &str,
+    ) -> Self {
         todo!()
     }
 }

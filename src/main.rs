@@ -12,6 +12,7 @@ mod tuple;
 mod types;
 mod unit;
 mod value;
+mod vector;
 
 use std::{error::Error, path::Path, process::exit};
 
@@ -20,7 +21,12 @@ use inkwell::{
     targets::{InitializationConfig, Target},
 };
 
-use crate::{codegen::do_codegen, compile::execute_jit, context::LanguageContext, parser::parse};
+use crate::{
+    codegen::do_codegen,
+    compile::{compile, execute_jit},
+    context::LanguageContext,
+    parser::parse,
+};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let path = Path::new("examples/test.hy").to_path_buf();
@@ -36,11 +42,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut ctx = LanguageContext::new(&llvm_ctx);
 
     let main_type = ctx.types.int.fn_type(&[], false);
-    let main_val = ctx.module.add_function("main", main_type, None);
+    let main_val = ctx.module.add_function("lang_main", main_type, None);
     let entry = llvm_ctx.append_basic_block(main_val, "entry");
     ctx.builder.position_at_end(entry);
 
-    do_codegen(&llvm_ctx, &mut ctx, path, program);
+    do_codegen(&llvm_ctx, &mut ctx, path, program).unwrap();
 
     ctx.builder.build_return(Some(&ctx.int(0))).unwrap();
 
@@ -48,7 +54,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     ctx.module.print_to_stderr();
     ctx.module.verify().unwrap();
 
-    execute_jit(&ctx);
+    compile(&ctx);
 
     Ok(())
 }

@@ -28,6 +28,7 @@ use crate::{
     types::{Metatype, TypeID},
     unit::Unit,
     value::{Field, ValueEnum, ValueStatic, any_to_basic},
+    vector::Vector,
 };
 
 pub type ScopeItem<'ctx> = HashMap<String, Field<'ctx>>;
@@ -105,6 +106,7 @@ impl<'ctx> LanguageContext<'ctx> {
         self.generic_gens
             .insert("MemberFunction", MemberFunction::build_metatype);
         self.generic_gens.insert("Tuple", Tuple::build_metatype);
+        self.generic_gens.insert("Vector", Vector::build_metatype);
         Str::build_metatype(context, self, vec![]);
         Unit::build_metatype(context, self, vec![]);
         Bool::build_metatype(context, self, vec![]);

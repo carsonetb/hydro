@@ -61,6 +61,10 @@ impl<'ctx> Value<'ctx> for Str<'ctx> {
     fn get_value(&self) -> BasicValueEnum<'ctx> {
         self.val.as_basic_value_enum()
     }
+
+    fn construct_ptr(&self, ctx: &LanguageContext<'ctx>, into_name: &str) -> PointerValue<'ctx> {
+        self.val
+    }
 }
 
 impl<'ctx> ValueStatic<'ctx> for Str<'ctx> {
@@ -100,10 +104,6 @@ impl<'ctx> Copyable<'ctx> for Str<'ctx> {
         val_type: TypeID,
         name: &str,
     ) -> Self {
-        let copy_type = ctx
-            .types
-            .ptr
-            .fn_type(&[BasicMetadataTypeEnum::PointerType(ctx.types.ptr)], false);
         let copy = ctx.module.get_function("String__copy").unwrap();
         let copied = ctx
             .build_call_returns(
@@ -124,6 +124,15 @@ impl<'ctx> Copyable<'ctx> for Str<'ctx> {
             TypeID::from_base("String"),
             name,
         )
+    }
+
+    fn from_ptr(
+        ctx: &LanguageContext<'ctx>,
+        ptr: PointerValue<'ctx>,
+        typ: TypeID,
+        into_name: &str,
+    ) -> Self {
+        Self::from_val(ctx, ptr.into(), typ, into_name)
     }
 }
 

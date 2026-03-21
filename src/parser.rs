@@ -66,12 +66,17 @@ pub enum Primary {
         on: Spanned<Box<Primary>>,
         name: Spanned<String>,
     },
+    Slice {
+        on: Spanned<Box<Primary>>,
+        expr: Spanned<Expr>,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub enum Atom {
     Literal(Spanned<ParseLiteral>),
     Grouping(Spanned<Expr>),
+    Array(Spanned<Vec<Spanned<Expr>>>),
     Var(Spanned<String>),
 }
 
@@ -178,22 +183,43 @@ pub fn literal<'src>() -> impl GenericParser<'src, Spanned<ParseLiteral>> {
 }
 
 pub fn atom<'src>(
-    expr: impl GenericParser<'src, Spanned<Expr>>,
+    expr: impl GenericParser<'src, Spanned<Expr>> + Clone,
 ) -> impl Parser<'src, &'src str, Spanned<Box<Atom>>, extra::Err<Rich<'src, char>>> {
-    literal()
-        .map(|l| l.span.make_wrapped(Box::new(Atom::Literal(l))))
-        .or(expr
-            .delimited_by(just("("), just(")"))
-            .spanned()
-            .map(|e| e.span.make_wrapped(Box::new(Atom::Grouping(e.inner)))))
-        .or(text::ascii::ident()
-            .spanned()
-            .padded()
-            .map(|keyword: Spanned<&str>| {
-                keyword.span.make_wrapped(Box::new(Atom::Var(
-                    keyword.span.make_wrapped(keyword.inner.to_string()),
-                )))
-            }))
+    let literal = literal().map(|l| l.span.make_wrapped(Box::new(Atom::Literal(l))));
+
+    let grouping = expr
+        .clone()
+        .delimited_by(just("("), just(")"))
+        .spanned()
+        .map(|e| e.span.make_wrapped(Box::new(Atom::Grouping(e.inner))));
+
+    let array = expr
+        .separated_by(just(","))
+        .collect::<Vec<_>>()
+        .delimited_by(just("["), just("]"))
+        .spanned()
+        .map(|es| es.span.make_wrapped(Box::new(Atom::Array(es))));
+
+    let var = text::ascii::ident()
+        .spanned()
+        .padded()
+        .map(|keyword: Spanned<&str>| {
+            keyword.span.make_wrapped(Box::new(Atom::Var(
+                keyword.span.make_wrapped(keyword.inner.to_string()),
+            )))
+        });
+
+    choice((literal, grouping, array, var))
+}
+
+enum Suffix {
+    Member(Spanned<String>),
+    Call {
+        span: SimpleSpan,
+        generics: Option<Vec<ParserType>>,
+        args: Vec<Spanned<Expr>>,
+    },
+    Slice(Spanned<Expr>),
 }
 
 pub fn primary<'src>(
@@ -204,42 +230,58 @@ pub fn primary<'src>(
             .map(|atom| atom.span.make_wrapped(Box::new(Primary::Atom(atom))))
             .boxed();
 
+        let member_suffix = just(".")
+            .ignore_then(ident().spanned())
+            .map(|i: Spanned<&str>| Suffix::Member(i.span.make_wrapped(i.inner.to_string())));
+
+        let call_suffix = type_parser()
+            .separated_by(just(",").padded())
+            .collect::<Vec<_>>()
+            .delimited_by(just("<"), just(">"))
+            .or_not()
+            .then(
+                expr.clone()
+                    .separated_by(just(","))
+                    .collect::<Vec<_>>()
+                    .delimited_by(just("("), just(")")),
+            )
+            .spanned()
+            .map(|stuff| Suffix::Call {
+                span: stuff.span,
+                generics: stuff.inner.0,
+                args: stuff.inner.1,
+            });
+
+        let slice_suffix = expr
+            .clone()
+            .delimited_by(just("["), just("]"))
+            .map(Suffix::Slice)
+            .boxed();
+
         atom.foldl(
-            just(".").ignore_then(ident().spanned()).repeated(),
-            |on, ident| {
-                on.span
-                    .union(ident.span)
-                    .make_wrapped(Box::new(Primary::Member {
-                        on,
-                        name: ident.span.make_wrapped(ident.inner.to_string()),
-                    }))
-            },
-        )
-        .foldl(
-            type_parser()
-                .separated_by(just(",").padded())
-                .collect::<Vec<_>>()
-                .delimited_by(just("<"), just(">"))
-                .or_not()
-                .then(
-                    expr.clone()
-                        .separated_by(just(","))
-                        .collect::<Vec<_>>()
-                        .delimited_by(just("("), just(")")),
-                )
-                .spanned()
-                .repeated(),
-            |on, stuff| {
-                on.span
-                    .union(stuff.span)
-                    .make_wrapped(Box::new(Primary::Call {
-                        on,
-                        generics: match stuff.inner.0 {
-                            Some(generics) => generics,
-                            None => vec![],
-                        },
-                        args: stuff.inner.1,
-                    }))
+            choice((member_suffix, call_suffix, slice_suffix)).repeated(),
+            |on, suffix| match suffix {
+                Suffix::Member(ident) => {
+                    on.span
+                        .union(ident.span)
+                        .make_wrapped(Box::new(Primary::Member {
+                            on,
+                            name: ident.span.make_wrapped(ident.inner.to_string()),
+                        }))
+                }
+                Suffix::Call {
+                    span,
+                    generics,
+                    args,
+                } => on.span.union(span).make_wrapped(Box::new(Primary::Call {
+                    on,
+                    generics: generics.unwrap_or_default(),
+                    args,
+                })),
+                Suffix::Slice(expr) => on
+                    .span
+                    .union(expr.span)
+                    .make_wrapped(Box::new(Primary::Slice { on, expr })),
             },
         )
         .boxed()

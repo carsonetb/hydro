@@ -105,6 +105,19 @@ impl<'ctx> Value<'ctx> for Bool<'ctx> {
     fn get_value(&self) -> BasicValueEnum<'ctx> {
         BasicValueEnum::IntValue(self.val)
     }
+
+    fn construct_ptr(
+        &self,
+        ctx: &LanguageContext<'ctx>,
+        into_name: &str,
+    ) -> inkwell::values::PointerValue<'ctx> {
+        let mem = ctx
+            .builder
+            .build_alloca(ctx.types.bool, &format!("{into_name}_ptr"))
+            .unwrap();
+        ctx.builder.build_store(mem, self.val);
+        mem
+    }
 }
 
 impl<'ctx> ValueStatic<'ctx> for Bool<'ctx> {
@@ -186,6 +199,20 @@ impl<'ctx> Copyable<'ctx> for Bool<'ctx> {
 
     fn from(ctx: &LanguageContext<'ctx>, other: Self, name: &str) -> Self {
         Bool::from_val(ctx, other.get_value(), other.get_type(ctx), name)
+    }
+
+    fn from_ptr(
+        ctx: &LanguageContext<'ctx>,
+        ptr: inkwell::values::PointerValue<'ctx>,
+        typ: TypeID,
+        into_name: &str,
+    ) -> Self {
+        Self::new(
+            ctx.builder
+                .build_load(ctx.types.bool, ptr, into_name)
+                .unwrap()
+                .into_int_value(),
+        )
     }
 }
 

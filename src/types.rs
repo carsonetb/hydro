@@ -10,7 +10,7 @@ use inkwell::{
 use crate::{
     codegen::CompileError,
     context::LanguageContext,
-    value::{any_to_basic, Field, Value, ValueEnum, ValueStatic},
+    value::{Field, Value, ValueEnum, ValueStatic, any_to_basic},
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -21,6 +21,7 @@ pub enum BasicBuiltin {
     Int,
     String,
     Tuple,
+    Vector,
     Function,
     MemberFunction,
 }
@@ -136,6 +137,10 @@ impl<'ctx> Value<'ctx> for Metatype<'ctx> {
 
     fn get_value(&self) -> BasicValueEnum<'ctx> {
         BasicValueEnum::PointerValue(self.static_ptr)
+    }
+
+    fn construct_ptr(&self, ctx: &LanguageContext<'ctx>, into_name: &str) -> PointerValue<'ctx> {
+        todo!()
     }
 }
 

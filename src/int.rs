@@ -14,7 +14,7 @@ use inkwell::{
     types::{AnyTypeEnum, BasicMetadataTypeEnum, BasicTypeEnum, StructType},
     values::{
         AnyValue, BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, IntValue,
-        StructValue,
+        PointerValue, StructValue,
     },
 };
 
@@ -52,9 +52,9 @@ impl<'ctx> Int<'ctx> {
         let right = add_llvm_fn.get_nth_param(1).unwrap().into_int_value();
         left.set_name("lhs");
         right.set_name("rhs");
-        let result = op_builder(left, right);
-        let as_int = Int::new(result);
-        ctx.builder.build_return(Some(&as_int.get_value())).unwrap();
+        ctx.builder
+            .build_return(Some(&op_builder(left, right)))
+            .unwrap();
         ctx.builder.position_at_end(old_block);
 
         add_llvm_fn
@@ -120,27 +120,13 @@ impl<'ctx> Value<'ctx> for Int<'ctx> {
             ">=" => op_fun_wrapper!(">=", "Int.>=", cmp_type),
             "==" => op_fun_wrapper!("==", "Int.==", cmp_type),
             "!=" => op_fun_wrapper!("!=", "Int.!=", cmp_type),
-            "to_string" => {
-                let bound_struct = ctx
-                    .get(to_string_type.clone())
-                    .obj_struct
-                    .unwrap()
-                    .const_named_struct(&[
-                        self.val.as_basic_value_enum(),
-                        ctx.module
-                            .get_function("Int__to_string")
-                            .unwrap()
-                            .as_global_value()
-                            .as_pointer_value()
-                            .as_basic_value_enum(),
-                    ]);
-                Ok(ValueEnum::MemberFunction(MemberFunction::new(
-                    ctx,
-                    bound_struct,
-                    to_string_type,
-                    into,
-                )))
-            }
+            "to_string" => Ok(ValueEnum::MemberFunction(MemberFunction::wrap_function(
+                ctx,
+                to_string_type,
+                "Int__to_string",
+                self.val.as_basic_value_enum(),
+                into,
+            ))),
             _ => Err(CompileError::new(
                 name.span,
                 &format!("Type `Int` has no `{}` member.", name.inner),
@@ -154,6 +140,15 @@ impl<'ctx> Value<'ctx> for Int<'ctx> {
 
     fn get_value(&self) -> BasicValueEnum<'ctx> {
         BasicValueEnum::IntValue(self.val)
+    }
+
+    fn construct_ptr(&self, ctx: &LanguageContext<'ctx>, into_name: &str) -> PointerValue<'ctx> {
+        let mem = ctx
+            .builder
+            .build_alloca(ctx.types.int, &format!("{into_name}_ptr"))
+            .unwrap();
+        ctx.builder.build_store(mem, self.val);
+        mem
     }
 }
 
@@ -307,11 +302,25 @@ impl<'ctx> Copyable<'ctx> for Int<'ctx> {
         _ptr_type: TypeID,
         name: &str,
     ) -> Self {
-        Int::new(val.into_int_value())
+        Self::new(val.into_int_value())
     }
 
     fn from(ctx: &LanguageContext<'ctx>, other: Self, name: &str) -> Self {
-        Int::from_val(ctx, other.get_value(), other.get_type(ctx), name)
+        Self::from_val(ctx, other.get_value(), other.get_type(ctx), name)
+    }
+
+    fn from_ptr(
+        ctx: &LanguageContext<'ctx>,
+        ptr: PointerValue<'ctx>,
+        typ: TypeID,
+        into_name: &str,
+    ) -> Self {
+        Self::new(
+            ctx.builder
+                .build_load(ctx.types.int, ptr, into_name)
+                .unwrap()
+                .into_int_value(),
+        )
     }
 }
 

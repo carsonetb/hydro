@@ -17,6 +17,7 @@ use crate::{
     tuple::Tuple,
     types::{BasicBuiltin, Metatype, TypeID},
     unit::Unit,
+    vector::Vector,
 };
 
 #[derive(Debug)]
@@ -71,6 +72,7 @@ pub enum ValueEnum<'ctx> {
     Int(Int<'ctx>),
     String(Str<'ctx>),
     Tuple(Tuple<'ctx>),
+    Vector(Vector<'ctx>),
     Function(Function<'ctx>),
     MemberFunction(MemberFunction<'ctx>),
 }
@@ -93,6 +95,7 @@ impl<'ctx> ValueEnum<'ctx> {
             BasicBuiltin::MemberFunction => {
                 Self::MemberFunction(MemberFunction::from_val(ctx, val, typ, name))
             }
+            BasicBuiltin::Vector => Self::Vector(Vector::from_val(ctx, val, typ, name)),
         }
     }
 }
@@ -107,6 +110,7 @@ pub trait Value<'ctx> {
     ) -> Result<ValueEnum<'ctx>, CompileError>;
     fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeID;
     fn get_value(&self) -> BasicValueEnum<'ctx>;
+    fn construct_ptr(&self, ctx: &LanguageContext<'ctx>, into_name: &str) -> PointerValue<'ctx>;
 }
 
 pub trait ValueStatic<'ctx>: Value<'ctx> {
@@ -124,8 +128,13 @@ pub trait Copyable<'ctx>: Value<'ctx> {
         val_type: TypeID,
         name: &str,
     ) -> Self;
-
     fn from(ctx: &LanguageContext<'ctx>, other: Self, name: &str) -> Self;
+    fn from_ptr(
+        ctx: &LanguageContext<'ctx>,
+        ptr: PointerValue<'ctx>,
+        typ: TypeID,
+        into_name: &str,
+    ) -> Self;
 }
 
 pub trait Literal<'ctx> {

@@ -147,6 +147,10 @@ impl<'ctx> Value<'ctx> for Function<'ctx> {
     fn get_value(&self) -> BasicValueEnum<'ctx> {
         BasicValueEnum::PointerValue(self.ptr)
     }
+
+    fn construct_ptr(&self, ctx: &LanguageContext<'ctx>, into_name: &str) -> PointerValue<'ctx> {
+        self.ptr
+    }
 }
 
 impl<'ctx> ValueStatic<'ctx> for Function<'ctx> {
@@ -190,6 +194,15 @@ impl<'ctx> Copyable<'ctx> for Function<'ctx> {
             name,
         )
     }
+
+    fn from_ptr(
+        ctx: &LanguageContext<'ctx>,
+        ptr: PointerValue<'ctx>,
+        typ: TypeID,
+        into_name: &str,
+    ) -> Self {
+        Self::from_val(ctx, ptr.into(), typ, into_name)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -214,6 +227,34 @@ impl<'ctx> MemberFunction<'ctx> {
             metatype: typ,
             val,
         }
+    }
+
+    pub fn wrap_function(
+        ctx: &LanguageContext<'ctx>,
+        typ: TypeID,
+        fn_name: &str,
+        val: BasicValueEnum<'ctx>,
+        name: &str,
+    ) -> Self {
+        let fn_struct = ctx.get_struct(typ.clone()).get_undef();
+        let fn_struct = ctx
+            .builder
+            .build_insert_value(fn_struct, val, 0, &format!("{name}_bound"))
+            .unwrap();
+        let fn_struct = ctx
+            .builder
+            .build_insert_value(
+                fn_struct,
+                ctx.module
+                    .get_function(fn_name)
+                    .unwrap()
+                    .as_global_value()
+                    .as_pointer_value(),
+                1,
+                &format!("{name}_fn"),
+            )
+            .unwrap();
+        Self::new(ctx, fn_struct.into_struct_value(), typ, name)
     }
 
     pub fn get_bound(&self, ctx: &LanguageContext<'ctx>, into_name: &str) -> ValueEnum<'ctx> {
@@ -285,6 +326,10 @@ impl<'ctx> Value<'ctx> for MemberFunction<'ctx> {
     fn get_value(&self) -> BasicValueEnum<'ctx> {
         self.val.as_basic_value_enum()
     }
+
+    fn construct_ptr(&self, ctx: &LanguageContext<'ctx>, into_name: &str) -> PointerValue<'ctx> {
+        todo!()
+    }
 }
 
 impl<'ctx> ValueStatic<'ctx> for MemberFunction<'ctx> {
@@ -298,13 +343,6 @@ impl<'ctx> ValueStatic<'ctx> for MemberFunction<'ctx> {
 
         let type_name = TypeID::new("MemberFunction", generics.clone());
         let obj_struct = llvm_ctx.opaque_struct_type(&type_name.to_string());
-        obj_struct.set_body(
-            &[
-                any_to_basic(ctx.get(generics[0].clone()).storage_type).unwrap(),
-                ctx.types.ptr.as_basic_type_enum(),
-            ],
-            false,
-        );
 
         let mut builder = MetatypeBuilder::new(
             ctx,
@@ -314,7 +352,15 @@ impl<'ctx> ValueStatic<'ctx> for MemberFunction<'ctx> {
             AnyTypeEnum::StructType(obj_struct),
             false,
         );
-        builder.build(llvm_ctx, ctx, generics);
+        builder.build(llvm_ctx, ctx, generics.clone());
+
+        obj_struct.set_body(
+            &[
+                any_to_basic(ctx.get(generics[0].clone()).storage_type).unwrap(),
+                ctx.types.ptr.as_basic_type_enum(),
+            ],
+            false,
+        );
     }
 }
 
@@ -335,5 +381,13 @@ impl<'ctx> Copyable<'ctx> for MemberFunction<'ctx> {
             other.get_type(ctx),
             name,
         )
+    }
+    fn from_ptr(
+        ctx: &LanguageContext<'ctx>,
+        ptr: PointerValue<'ctx>,
+        typ: TypeID,
+        into_name: &str,
+    ) -> Self {
+        todo!()
     }
 }

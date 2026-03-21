@@ -34,7 +34,16 @@ pub fn compile(ctx: &LanguageContext) {
     file.write_all(buffer.as_slice()).unwrap();
 
     Command::new("clang")
-        .args(["bin/out.o", "-o", "bin/out", "-lc"])
-        .output()
-        .expect("Failed to link program.");
+        .args([
+            "bin/out.o",
+            "src/clib/runtime.c",
+            "-no-pie",
+            "-o",
+            "bin/out",
+            "-lc",
+            "-lgc",
+        ])
+        .status()
+        .unwrap();
+    Command::new("./bin/out").status().unwrap();
 }

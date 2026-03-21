@@ -11,7 +11,7 @@ use inkwell::{
     context::Context,
     module::Linkage,
     types::{AnyType, BasicType, FunctionType},
-    values::BasicValue,
+    values::{BasicValue, BasicValueEnum},
 };
 
 use crate::{
@@ -24,6 +24,7 @@ use crate::{
     types::{Metatype, TypeID},
     unit::Unit,
     value::{Field, Literal, Value, ValueEnum, any_to_basic},
+    vector::Vector,
 };
 
 #[derive(Debug, Clone)]
@@ -68,7 +69,7 @@ pub fn gen_literal<'ctx>(
 }
 
 pub fn gen_atom<'ctx>(
-    ctx: &LanguageContext<'ctx>,
+    ctx: &mut LanguageContext<'ctx>,
     atom: &Atom,
     into_name: &str,
 ) -> Result<ValueEnum<'ctx>, CompileError> {
@@ -76,11 +77,36 @@ pub fn gen_atom<'ctx>(
         Atom::Literal(literal) => Ok(gen_literal(ctx, literal, into_name)),
         Atom::Grouping(expr) => gen_expr(ctx, expr, into_name),
         Atom::Var(name) => ctx.get_field(name.clone()).map(|val| val.value.clone()),
+        Atom::Array(exprs) => {
+            if exprs.len() == 0 {
+                return Err(CompileError::new(
+                    exprs.span,
+                    "Cannot (currently) infer type of an empty array.",
+                ));
+            }
+            let mut values = Vec::<ValueEnum<'ctx>>::new();
+            for (i, expr) in exprs.iter().enumerate() {
+                values.push(gen_expr(ctx, expr, &format!("{}_elem{}", into_name, i))?);
+            }
+            let vec_type = TypeID::new("Vector", vec![values[0].get_type(ctx)]);
+            ctx.get_with_gen_ext(vec_type.clone());
+            let vec = Vector::new(ctx, vec_type.clone(), into_name);
+            for (i, val) in values.iter().enumerate() {
+                if val.get_type(ctx) != vec_type.generics[0] {
+                    return Err(CompileError::new(
+                        exprs.span,
+                        "Not all elements in the array have the same type.",
+                    ));
+                }
+                vec.push(ctx, val, &format!("{}_elem{}", into_name, i));
+            }
+            Ok(ValueEnum::Vector(vec))
+        }
     }
 }
 
 pub fn gen_primary<'ctx>(
-    ctx: &LanguageContext<'ctx>,
+    ctx: &mut LanguageContext<'ctx>,
     prim: &Primary,
     into_name: &str,
 ) -> Result<ValueEnum<'ctx>, CompileError> {
@@ -116,14 +142,30 @@ pub fn gen_primary<'ctx>(
             .map_err(|err| CompileError::new(on.span, &err))?)
         }
         Primary::Member { on, name } => {
-            let on = gen_primary(ctx, on, &format!("{}_on", into_name)).unwrap();
+            let on = gen_primary(ctx, on, &format!("{}_on", into_name))?;
             on.member(ctx, name.clone(), into_name)
+        }
+        Primary::Slice { on, expr } => {
+            let on_eval = gen_primary(ctx, on, &format!("{}_callee", into_name))?;
+            let on_typ = on_eval.get_type(ctx);
+            let slice_eval = gen_expr(ctx, expr, &format!("{into_name}_slice"))?;
+            let slice_fn = on_eval
+                .member(
+                    ctx,
+                    expr.span.make_wrapped("[]".to_string()),
+                    &format!("{into_name}_slicer"),
+                )?
+                .try_as_member_function()
+                .unwrap();
+            Ok(slice_fn
+                .call(ctx, vec![slice_eval], into_name)
+                .map_err(|err| CompileError::new(on.span, &err))?)
         }
     }
 }
 
 pub fn gen_expr<'ctx>(
-    ctx: &LanguageContext<'ctx>,
+    ctx: &mut LanguageContext<'ctx>,
     expr: &Expr,
     into_name: &str,
 ) -> Result<ValueEnum<'ctx>, CompileError> {
@@ -369,7 +411,7 @@ pub fn do_codegen<'ctx>(
     ctx: &mut LanguageContext<'ctx>,
     path: PathBuf,
     program: Program,
-) {
+) -> Result<(), ()> {
     let filename = path
         .clone()
         .file_name()
@@ -435,5 +477,11 @@ pub fn do_codegen<'ctx>(
             .finish()
             .eprint((filename.clone(), Source::from(&src)))
             .unwrap();
+    }
+
+    if ctx.errors.len() > 0 {
+        Err(())
+    } else {
+        Ok(())
     }
 }
