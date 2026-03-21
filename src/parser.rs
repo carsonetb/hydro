@@ -44,6 +44,10 @@ pub enum Stmt {
         name: Spanned<String>,
         value: Spanned<Box<Expr>>,
     },
+    While {
+        condition: Spanned<Expr>,
+        inner: Vec<Spanned<Stmt>>,
+    },
     Expr(Spanned<Box<Expr>>),
 }
 
@@ -380,7 +384,9 @@ pub fn var_decl<'src>() -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'s
         .boxed()
 }
 
-pub fn stmt<'src>() -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'src, char>>> {
+pub fn stmt<'src>(
+    block: impl GenericParser<'src, Vec<Spanned<Stmt>>> + Clone + 'src,
+) -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'src, char>>> + Clone {
     let set = text::ascii::ident()
         .labelled("var set")
         .padded()
@@ -402,6 +408,15 @@ pub fn stmt<'src>() -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'src, 
             None => Stmt::Return(None),
         });
 
+    let while_stmt =
+        text::keyword("while")
+            .ignore_then(expr())
+            .then(block)
+            .map(|(condition, block)| Stmt::While {
+                condition,
+                inner: block,
+            });
+
     let just_expr = expr()
         .then_ignore(just(";").padded())
         .map(|expression| Stmt::Expr(expression.span.make_wrapped(Box::new(expression.inner))));
@@ -414,7 +429,7 @@ pub fn stmt<'src>() -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'src, 
             .map(|_| Stmt::Error(ErrorKind::Unknown)),
     );
 
-    choice((var_decl(), ret, set, just_expr))
+    choice((var_decl(), ret, set, while_stmt, just_expr))
         .recover_with(recovery)
         .labelled("statement")
         .boxed()
@@ -422,11 +437,13 @@ pub fn stmt<'src>() -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'src, 
 
 pub fn block<'src>()
 -> impl Parser<'src, &'src str, Vec<Spanned<Stmt>>, extra::Err<Rich<'src, char>>> {
-    stmt()
-        .spanned()
-        .repeated()
-        .collect::<Vec<_>>()
-        .delimited_by(just("{").padded(), just("}").padded())
+    recursive(|block| {
+        stmt(block)
+            .spanned()
+            .repeated()
+            .collect::<Vec<_>>()
+            .delimited_by(just("{").padded(), just("}").padded())
+    })
 }
 
 pub fn decl<'src>() -> impl Parser<'src, &'src str, Decl, extra::Err<Rich<'src, char>>> {

@@ -15,7 +15,7 @@ typedef struct {
   void *data;
 } Vector;
 
-void print(String *val) { printf("%s", val->val); }
+void print(String *val) { fprintf(stderr, "%s\n", val->val); }
 
 String *Int__to_string(int val) {
   char *mem = GC_MALLOC_ATOMIC(48);

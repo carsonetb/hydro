@@ -26,7 +26,14 @@ impl<'ctx> Str<'ctx> {
         into_name: &str,
     ) -> Self {
         let obj_struct = ctx.context.get_struct_type("String").unwrap();
-        let mem = ctx.builder.build_malloc(obj_struct, into_name).unwrap();
+        let malloc_fn = ctx.module.get_function("GC_malloc").unwrap();
+        let mem = ctx
+            .build_call_returns(
+                malloc_fn,
+                &[obj_struct.size_of().unwrap().into()],
+                into_name,
+            )
+            .into_pointer_value();
         let dest_size = ctx
             .builder
             .build_struct_gep(obj_struct, mem, 0, "out_size_ptr")
@@ -142,13 +149,13 @@ impl<'ctx> Literal<'ctx> for Str<'ctx> {
 
     fn from_literal(ctx: &LanguageContext<'ctx>, literal: Self::LiteralType, name: &str) -> Self {
         let const_string = ctx.context.const_string(literal.as_bytes(), true);
-        let size = ctx.int(name.len() as u64 + 1);
-        let array = ctx
-            .builder
-            .build_array_malloc(const_string.get_type(), size, &name)
-            .unwrap();
-        ctx.builder.build_store(array, const_string);
-        Self::new(ctx, size, array, name)
+        let size = ctx.types.long.const_int(name.len() as u64 + 1, false);
+        let malloc_fn = ctx.module.get_function("GC_malloc").unwrap();
+        let mem = ctx
+            .build_call_returns(malloc_fn, &[size.into()], name)
+            .into_pointer_value();
+        ctx.builder.build_store(mem, const_string);
+        Self::new(ctx, size, mem, name)
     }
 
     fn raw(&self, ctx: &LanguageContext<'ctx>, name: &str) -> Self::Repr {

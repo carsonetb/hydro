@@ -11,7 +11,7 @@ use inkwell::{
     context::Context,
     module::Linkage,
     types::{AnyType, BasicType, FunctionType},
-    values::{BasicValue, BasicValueEnum},
+    values::{BasicValue, BasicValueEnum, FunctionValue},
 };
 
 use crate::{
@@ -19,7 +19,7 @@ use crate::{
     callable::{Callable, Function},
     context::LanguageContext,
     int::Int,
-    parser::{Atom, Decl, Expr, ParseLiteral, Primary, Program, Stmt},
+    parser::{Atom, Decl, Expr, ParseLiteral, ParserType, Primary, Program, Stmt},
     string::Str,
     types::{Metatype, TypeID},
     unit::Unit,
@@ -208,6 +208,9 @@ pub fn gen_expr<'ctx>(
 pub fn gen_stmt<'ctx>(
     ctx: &mut LanguageContext<'ctx>,
     stmt: &Stmt,
+    function: FunctionValue<'ctx>,
+    returns: TypeID,
+    returns_spanned: Option<ParserType>,
 ) -> Result<Option<ValueEnum<'ctx>>, CompileError> {
     match stmt {
         Stmt::Error(_) => panic!(),
@@ -247,11 +250,90 @@ pub fn gen_stmt<'ctx>(
             Ok(_) => Ok(None),
             Err(err) => Err(err),
         },
+        Stmt::While { condition, inner } => {
+            let cond_block = ctx.context.append_basic_block(function, "while_cond");
+            let loop_block = ctx.context.append_basic_block(function, "while_loop");
+            let continued_block = ctx.context.append_basic_block(function, "continue");
+
+            ctx.builder.build_unconditional_branch(cond_block);
+            ctx.builder.position_at_end(cond_block);
+
+            let cond_eval = gen_expr(ctx, condition, "while_condition")?;
+            if cond_eval.get_type(ctx) != TypeID::from_base("Bool") {
+                return Err(CompileError::new(
+                    condition.span,
+                    &format!(
+                        "Expression must evaluate to type `Bool` in a `while` loop, instead it evaluates to type `{}`.",
+                        cond_eval.get_type(ctx)
+                    ),
+                ));
+            }
+            ctx.builder
+                .build_conditional_branch(
+                    cond_eval.get_value().into_int_value(),
+                    loop_block,
+                    continued_block,
+                )
+                .unwrap();
+            ctx.builder.position_at_end(loop_block);
+
+            let returns = gen_stmts(ctx, inner, function, returns, returns_spanned)?;
+            if returns.is_none() {
+                ctx.builder.build_unconditional_branch(cond_block);
+            } // TODO: Warning here
+
+            ctx.builder.position_at_end(continued_block);
+            Ok(returns)
+        }
         Stmt::Return(expr) => match expr {
             Some(expr) => gen_expr(ctx, expr, "RETURN").map(|val| Some(val)),
             None => Ok(Some(ValueEnum::Unit(Unit {}))),
         },
     }
+}
+
+pub fn gen_stmts<'ctx>(
+    ctx: &mut LanguageContext<'ctx>,
+    stmts: &Vec<Spanned<Stmt>>,
+    function: FunctionValue<'ctx>,
+    returns: TypeID,
+    returns_spanned: Option<ParserType>,
+) -> Result<Option<ValueEnum<'ctx>>, CompileError> {
+    for stmt in stmts.iter() {
+        match gen_stmt(
+            ctx,
+            stmt,
+            function,
+            returns.clone(),
+            returns_spanned.clone(),
+        )? {
+            Some(ret) => {
+                if ret.get_type(ctx) != returns {
+                    let mut out = CompileError::new(
+                        stmt.span,
+                        &format!("Incorrect return type, expected `{}`", returns),
+                    );
+                    if returns_spanned.is_some() {
+                        out.0.push((
+                            returns_spanned.as_ref().unwrap().span,
+                            "Return type specified here.".to_string(),
+                        ));
+                    }
+                    return Err(out);
+                }
+                let ret_value: Option<&dyn BasicValue<'ctx>> =
+                    if ret.clone().try_as_unit().is_none() {
+                        Some(&ret.get_value())
+                    } else {
+                        None
+                    };
+                ctx.builder.build_return(ret_value);
+                return Ok(Some(ret));
+            }
+            None => continue,
+        }
+    }
+    Ok(None)
 }
 
 pub fn gen_decl_pre<'ctx>(
@@ -356,38 +438,15 @@ pub fn gen_decl<'ctx>(
                 ctx.add_field(&name.inner, Field::new(value, &name.inner));
             }
 
-            let mut returned = false;
-            for stmt in body.inner.iter() {
-                match gen_stmt(ctx, &stmt.inner)? {
-                    Some(ret) => {
-                        if ret.get_type(ctx) != returns {
-                            let mut out = CompileError::new(
-                                stmt.span,
-                                &format!("Incorrect return type, expected `{}`", returns),
-                            );
-                            if returns_spanned.is_some() {
-                                out.0.push((
-                                    returns_spanned.as_ref().unwrap().span,
-                                    "Return type specified here.".to_string(),
-                                ));
-                            }
-                            return Err(out);
-                        }
-                        let ret_value: Option<&dyn BasicValue<'ctx>> =
-                            if ret.clone().try_as_unit().is_none() {
-                                Some(&ret.get_value())
-                            } else {
-                                None
-                            };
-                        ctx.builder.build_return(ret_value);
-                        returned = true;
-                        break;
-                    }
-                    None => continue,
-                }
-            }
+            let mut returns_val = gen_stmts(
+                ctx,
+                &body.inner,
+                function,
+                returns.clone(),
+                returns_spanned.clone(),
+            )?;
 
-            if !returned {
+            if returns_val.is_none() {
                 if returns != TypeID::from_base("Unit") {
                     return Err(CompileError::with_notes(
                         body.span,
