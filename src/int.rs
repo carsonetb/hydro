@@ -286,9 +286,6 @@ impl<'ctx> ValueStatic<'ctx> for Int<'ctx> {
         builder.add_static("==", ValueEnum::Function(eqa_fn));
         builder.add_static("!=", ValueEnum::Function(neq_fn));
 
-        let to_string_llvm_type = ctx.types.ptr.fn_type(&[ctx.types.int.into()], false);
-        let to_string_llvm_fn = ctx.add_function("Int__to_string", to_string_llvm_type);
-
         builder.build(llvm_ctx, ctx, generics);
 
         let to_string_type = TypeID::new(

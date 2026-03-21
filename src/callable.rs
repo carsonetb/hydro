@@ -31,17 +31,16 @@ pub trait Callable<'ctx> {
         ctx: &LanguageContext<'ctx>,
         fn_name: &str,
         fn_ptr: PointerValue<'ctx>,
-        args: Vec<ValueEnum<'ctx>>,
+        args: &Vec<ValueEnum<'ctx>>,
         into_name: &str,
     ) -> Result<ValueEnum<'ctx>, String> {
         let arg_ptrs: Vec<BasicMetadataValueEnum<'ctx>> = args
             .into_iter()
             .map(|arg| BasicMetadataValueEnum::try_from(arg.get_value()).unwrap())
             .collect();
-        let params: Vec<BasicMetadataTypeEnum<'ctx>> = self
-            .args()
+        let params: Vec<BasicMetadataTypeEnum<'ctx>> = args
             .into_iter()
-            .map(|a| BasicMetadataTypeEnum::try_from(ctx.get_storage(a.clone())).unwrap())
+            .map(|a| ctx.get_storage(a.get_type(ctx)).into())
             .collect();
         let fn_type = ctx.get_storage(self.returns()).fn_type(&params, false);
         let result = ctx
@@ -116,7 +115,7 @@ impl<'ctx> Callable<'ctx> for Function<'ctx> {
             return Err("Arguments to this function are incorrect.".to_string()); // TODO: Improve this error.
         }
 
-        self.call_basic(ctx, &self.name, self.ptr, args, into_name)
+        self.call_basic(ctx, &self.name, self.ptr, &args, into_name)
     }
 
     fn args(&self) -> Vec<TypeID> {
@@ -254,7 +253,7 @@ impl<'ctx> Callable<'ctx> for MemberFunction<'ctx> {
             .build_extract_value(self.val, 1, &format!("{}_callee", into_name))
             .unwrap()
             .into_pointer_value();
-        self.call_basic(ctx, &self.name, fn_ptr, args_with_bound, into_name)
+        self.call_basic(ctx, &self.name, fn_ptr, &args_with_bound, into_name)
     }
 
     fn args(&self) -> Vec<TypeID> {

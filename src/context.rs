@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::Path};
+use std::{collections::HashMap, env, path::Path};
 
 use chumsky::span::{Spanned, WrappingSpan};
 use inkwell::{
@@ -84,25 +84,11 @@ impl<'ctx> LanguageContext<'ctx> {
     }
 
     pub fn init_metatypes(&mut self, context: &'ctx Context) {
-        const OUT_DIR: &'static str = env!("OUT_DIR");
-        let path = Path::new(OUT_DIR).join("libbuiltin.a");
-        load_library_permanently(&path).unwrap();
+        let builtins_path = env::var("OUT_DIR").unwrap() + "/builtin.bc";
+        let builtins_module = Module::parse_bitcode_from_path(builtins_path, context).unwrap();
+        self.module.link_in_module(builtins_module);
 
-        let copy_type = self
-            .types
-            .ptr
-            .fn_type(&[BasicMetadataTypeEnum::PointerType(self.types.ptr)], false);
-        let copy = self.module.add_function("String__copy", copy_type, None);
-
-        Str::build_metatype(context, self, vec![]);
-        let string_metatype = self.get(TypeID::from_base("String"));
-        let print_llvm_type = self.types.void.fn_type(
-            &[BasicMetadataTypeEnum::PointerType(
-                string_metatype.storage_type.into_pointer_type(),
-            )],
-            false,
-        );
-        let print_llvm_fn = self.module.add_function("print", print_llvm_type, None);
+        let print_llvm_fn = self.module.get_function("print").unwrap();
 
         let print_type = TypeID::new(
             "Function",
@@ -119,6 +105,7 @@ impl<'ctx> LanguageContext<'ctx> {
         self.generic_gens
             .insert("MemberFunction", MemberFunction::build_metatype);
         self.generic_gens.insert("Tuple", Tuple::build_metatype);
+        Str::build_metatype(context, self, vec![]);
         Unit::build_metatype(context, self, vec![]);
         Bool::build_metatype(context, self, vec![]);
         Int::build_metatype(context, self, vec![]);

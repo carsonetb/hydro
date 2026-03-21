@@ -124,7 +124,6 @@ name = "hydro-rs"
 version = "0.1.0"
 dependencies = [
  "ariadne",
- "cc",
  "chumsky",
  "enum_dispatch",
  "inkwell",
