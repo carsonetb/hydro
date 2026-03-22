@@ -3,8 +3,14 @@
 fn main {
     var array = [1, 2, 3];
     array.push(5);
-    while true {
-        "hello";
+    if false {
+        print("hello");
+    }
+    elif array[0] == 1 {
+        print("hola");
+    }
+    else {
+        print("nevermind");
     }
     print(array[3].to_string());
 }

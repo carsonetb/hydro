@@ -5,7 +5,12 @@ use std::{
 };
 
 use ariadne::{Color, Label, Report, ReportKind, Source};
-use chumsky::{extra::Err, prelude::*, span::WrappingSpan, text::ascii::ident};
+use chumsky::{
+    extra::Err,
+    prelude::*,
+    span::WrappingSpan,
+    text::{ascii::ident, keyword},
+};
 
 use crate::types::TypeID;
 
@@ -31,7 +36,7 @@ pub enum Decl {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Stmt {
     Error(ErrorKind),
     Return(Option<Spanned<Box<Expr>>>),
@@ -47,6 +52,12 @@ pub enum Stmt {
     While {
         condition: Spanned<Expr>,
         inner: Vec<Spanned<Stmt>>,
+    },
+    If {
+        condition: Spanned<Expr>,
+        then: Vec<Spanned<Stmt>>,
+        elifs: Vec<(Spanned<Expr>, Vec<Spanned<Stmt>>)>,
+        else_block: Option<Vec<Spanned<Stmt>>>,
     },
     Expr(Spanned<Box<Expr>>),
 }
@@ -292,7 +303,8 @@ pub fn primary<'src>(
     })
 }
 
-pub fn expr<'src>() -> impl Parser<'src, &'src str, Spanned<Expr>, extra::Err<Rich<'src, char>>> {
+pub fn expr<'src>()
+-> impl Parser<'src, &'src str, Spanned<Expr>, extra::Err<Rich<'src, char>>> + Clone {
     macro_rules! op {
         ($c:expr) => {
             just($c).spanned().padded()
@@ -408,14 +420,31 @@ pub fn stmt<'src>(
             None => Stmt::Return(None),
         });
 
-    let while_stmt =
-        text::keyword("while")
-            .ignore_then(expr())
-            .then(block)
-            .map(|(condition, block)| Stmt::While {
-                condition,
-                inner: block,
-            });
+    let while_stmt = text::keyword("while")
+        .ignore_then(expr())
+        .then(block.clone())
+        .map(|(condition, block)| Stmt::While {
+            condition,
+            inner: block,
+        });
+
+    let if_stmt = text::keyword("if")
+        .ignore_then(expr())
+        .then(block.clone())
+        .then(
+            keyword("elif")
+                .ignore_then(expr())
+                .then(block.clone())
+                .repeated()
+                .collect::<Vec<_>>(),
+        )
+        .then(keyword("else").ignore_then(block.clone()).or_not())
+        .map(|(((condition, then), elifs), else_block)| Stmt::If {
+            condition,
+            then,
+            elifs,
+            else_block,
+        });
 
     let just_expr = expr()
         .then_ignore(just(";").padded())
@@ -429,7 +458,7 @@ pub fn stmt<'src>(
             .map(|_| Stmt::Error(ErrorKind::Unknown)),
     );
 
-    choice((var_decl(), ret, set, while_stmt, just_expr))
+    choice((var_decl(), ret, set, while_stmt, if_stmt, just_expr))
         .recover_with(recovery)
         .labelled("statement")
         .boxed()

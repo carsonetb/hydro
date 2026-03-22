@@ -205,6 +205,101 @@ pub fn gen_expr<'ctx>(
     }
 }
 
+pub fn gen_if<'ctx>(
+    ctx: &mut LanguageContext<'ctx>,
+    stmt: &Stmt,
+    function: FunctionValue<'ctx>,
+    returns: TypeID,
+    returns_spanned: Option<ParserType>,
+) -> Result<Option<ValueEnum<'ctx>>, CompileError> {
+    match stmt {
+        Stmt::If {
+            condition,
+            then,
+            elifs,
+            else_block,
+        } => {
+            let truthy_block = ctx.context.append_basic_block(function, "truthy");
+            let falsey_block = ctx.context.append_basic_block(function, "falsey");
+            let continued_block = ctx.context.append_basic_block(function, "continue");
+
+            let cond_eval = gen_expr(ctx, condition, "while_condition")?;
+            if cond_eval.get_type(ctx) != TypeID::from_base("Bool") {
+                return Err(CompileError::new(
+                    condition.span,
+                    &format!(
+                        "Expression must evaluate to type `Bool` in an `if` statement, instead it evaluates to type `{}`.",
+                        cond_eval.get_type(ctx)
+                    ),
+                ));
+            }
+            ctx.builder.build_conditional_branch(
+                cond_eval.get_value().into_int_value(),
+                truthy_block,
+                falsey_block,
+            );
+
+            ctx.builder.position_at_end(truthy_block);
+            let mut if_returns = gen_stmts(
+                ctx,
+                then,
+                function,
+                returns.clone(),
+                returns_spanned.clone(),
+            )?;
+            if if_returns.is_none() {
+                ctx.builder.build_unconditional_branch(continued_block);
+            }
+
+            ctx.builder.position_at_end(falsey_block);
+
+            let mut elifs = elifs.clone();
+
+            if elifs.len() > 0 {
+                let (cond, then) = elifs.remove(0);
+                let elif_returns = gen_if(
+                    ctx,
+                    &Stmt::If {
+                        condition: cond,
+                        then,
+                        elifs: elifs.clone(),
+                        else_block: else_block.clone(),
+                    },
+                    function,
+                    returns,
+                    returns_spanned,
+                )?;
+                if_returns = if if_returns.is_some() {
+                    elif_returns
+                } else {
+                    None
+                };
+            } else if else_block.is_some() {
+                let else_returns = gen_stmts(
+                    ctx,
+                    else_block.as_ref().unwrap(),
+                    function,
+                    returns,
+                    returns_spanned,
+                )?;
+                if_returns = if if_returns.is_some() {
+                    else_returns
+                } else {
+                    None
+                }
+            }
+
+            if if_returns.is_none() {
+                ctx.builder.build_unconditional_branch(continued_block);
+                ctx.builder.position_at_end(continued_block);
+            }
+
+            Ok(if_returns)
+        }
+        _ => panic!(),
+    }
+}
+
 pub fn gen_stmt<'ctx>(
     ctx: &mut LanguageContext<'ctx>,
     stmt: &Stmt,
@@ -285,6 +380,12 @@ pub fn gen_stmt<'ctx>(
             ctx.builder.position_at_end(continued_block);
             Ok(returns)
         }
+        Stmt::If {
+            condition,
+            then,
+            elifs,
+            else_block,
+        } => gen_if(ctx, stmt, function, returns, returns_spanned),
         Stmt::Return(expr) => match expr {
             Some(expr) => gen_expr(ctx, expr, "RETURN").map(|val| Some(val)),
             None => Ok(Some(ValueEnum::Unit(Unit {}))),
