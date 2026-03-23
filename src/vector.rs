@@ -3,7 +3,7 @@ use std::fmt::format;
 use chumsky::span::Spanned;
 use inkwell::{
     context::Context,
-    values::{BasicValue, BasicValueEnum, PointerValue},
+    values::{BasicValue, BasicValueEnum, IntValue, PointerValue},
 };
 
 use crate::{
@@ -57,6 +57,40 @@ impl<'ctx> Vector<'ctx> {
             .build_call(push_fn, &[self.ptr.into(), val_to_push.into()], "UNUSED");
     }
 
+    pub fn get(
+        &self,
+        ctx: &LanguageContext<'ctx>,
+        ind: &IntValue<'ctx>,
+        name: &str,
+    ) -> ValueEnum<'ctx> {
+        let get_fn = ctx.module.get_function("Vector__get").unwrap();
+        let get_int_fn = ctx.module.get_function("Vector__get__Int").unwrap();
+        let get_bool_fn = ctx.module.get_function("Vector__get__Bool").unwrap();
+        let get_fn = if self.contains().base == "Int" {
+            get_int_fn
+        } else if self.contains().base == "Bool" {
+            get_bool_fn
+        } else {
+            get_fn
+        };
+        ValueEnum::from_val(
+            ctx,
+            ctx.build_call_returns(
+                get_fn,
+                &[self.ptr.into(), ind.as_basic_value_enum().into()],
+                name,
+            ),
+            self.contains(),
+            name,
+        )
+    }
+
+    pub fn len(&self, ctx: &LanguageContext<'ctx>, name: &str) -> IntValue<'ctx> {
+        let len_fn = ctx.module.get_function("Vector__len").unwrap();
+        ctx.build_call_returns(len_fn, &[self.ptr.into()], name)
+            .into_int_value()
+    }
+
     pub fn contains(&self) -> TypeID {
         self.metatype.generics[0].clone()
     }
@@ -79,6 +113,17 @@ impl<'ctx> Vector<'ctx> {
                 me.clone(),
                 TypeID::new("Tuple", vec![me.generics[0].clone()]),
                 TypeID::from_base("Unit"),
+            ],
+        )
+    }
+
+    fn len_type(me: TypeID) -> TypeID {
+        TypeID::new(
+            "MemberFunction",
+            vec![
+                me.clone(),
+                TypeID::new("Tuple", vec![]),
+                TypeID::from_base("Int"),
             ],
         )
     }
@@ -120,6 +165,13 @@ impl<'ctx> Value<'ctx> for Vector<'ctx> {
                     into,
                 )))
             }
+            "len" => Ok(ValueEnum::MemberFunction(MemberFunction::wrap_function(
+                ctx,
+                Self::len_type(self.metatype.clone()),
+                "Vector__len",
+                self.ptr.into(),
+                into,
+            ))),
             _ => Err(CompileError::new(
                 name.span,
                 &format!("Type `{}` has no `{}` member.", self.metatype, name.inner),
@@ -162,6 +214,7 @@ impl<'ctx> ValueStatic<'ctx> for Vector<'ctx> {
 
         ctx.get_with_gen_ext(Self::get_fn_type(typeid.clone()));
         ctx.get_with_gen_ext(Self::push_type(typeid.clone()));
+        ctx.get_with_gen_ext(Self::len_type(typeid.clone()));
 
         obj_struct.set_body(
             &[

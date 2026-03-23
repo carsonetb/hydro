@@ -60,7 +60,7 @@ void Vector__push__Int(Vector *vec, int item) { Vector__push(vec, &item); }
 
 void Vector__push__Bool(Vector *vec, char item) { Vector__push(vec, &item); }
 
-void *Vector__get(Vector *vec, size_t index) {
+void *Vector__get(Vector *vec, int index) {
   if (index >= vec->length) {
     fprintf(stderr, "Tried to access Vector element greater than its size.\n");
     return NULL;
@@ -69,10 +69,12 @@ void *Vector__get(Vector *vec, size_t index) {
   return (char *)vec->data + (index * vec->elem_size);
 }
 
-int Vector__get__Int(Vector *vec, size_t index) {
+int Vector__get__Int(Vector *vec, int index) {
   return *(int *)Vector__get(vec, index);
 }
 
-char Vector__get__Bool(Vector *vec, size_t index) {
+char Vector__get__Bool(Vector *vec, int index) {
   return *(char *)Vector__get(vec, index);
 }
+
+int Vector__len(Vector *vec) { return vec->length; }

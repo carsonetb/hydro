@@ -380,6 +380,69 @@ pub fn gen_stmt<'ctx>(
             ctx.builder.position_at_end(continued_block);
             Ok(returns)
         }
+        Stmt::For {
+            looper,
+            loopee,
+            block,
+        } => {
+            let loopee_eval = gen_expr(ctx, loopee, "loopee")?;
+            let as_vec = loopee_eval.clone().try_as_vector();
+            if as_vec.is_none() {
+                return Err(CompileError::new(
+                    loopee.span,
+                    &format!(
+                        "Loopee of a `for` loop must be of type `Vec`, instead it is of type `{}`",
+                        loopee_eval.get_type(ctx)
+                    ),
+                ));
+            }
+            let as_vec = as_vec.unwrap();
+            let len = as_vec.len(ctx, "loopee_length");
+            let ind = ctx
+                .builder
+                .build_alloca(ctx.types.int, "looper_ind_ptr")
+                .unwrap();
+            ctx.builder.build_store(ind, ctx.int(0));
+
+            let cond_block = ctx.context.append_basic_block(function, "for_cond");
+            let loop_block = ctx.context.append_basic_block(function, "for_loop");
+            let continue_block = ctx.context.append_basic_block(function, "continue");
+
+            ctx.builder.build_unconditional_branch(cond_block);
+            ctx.builder.position_at_end(cond_block);
+
+            let ind_val = ctx
+                .builder
+                .build_load(ctx.types.int, ind, "loopee_ind")
+                .unwrap()
+                .into_int_value();
+            ctx.builder.build_conditional_branch(
+                ctx.builder
+                    .build_int_compare(inkwell::IntPredicate::SLT, ind_val, len, "should_loop")
+                    .unwrap(),
+                loop_block,
+                continue_block,
+            );
+
+            ctx.builder.position_at_end(loop_block);
+
+            let vec_item = as_vec.get(ctx, &ind_val, &looper.inner);
+            ctx.add_field(&looper.inner, Field::new(vec_item, &looper.inner));
+            let returns = gen_stmts(ctx, block, function, returns, returns_spanned)?;
+            if returns.is_none() {
+                ctx.builder.build_store(
+                    ind,
+                    ctx.builder
+                        .build_int_add(ind_val, ctx.int(1), "looper_index")
+                        .unwrap(),
+                );
+                ctx.builder.build_unconditional_branch(cond_block);
+            } // TODO: Warning here
+
+            ctx.builder.position_at_end(continue_block);
+
+            Ok(returns)
+        }
         Stmt::If {
             condition,
             then,
@@ -400,6 +463,7 @@ pub fn gen_stmts<'ctx>(
     returns: TypeID,
     returns_spanned: Option<ParserType>,
 ) -> Result<Option<ValueEnum<'ctx>>, CompileError> {
+    ctx.push_scope();
     for stmt in stmts.iter() {
         match gen_stmt(
             ctx,
@@ -434,6 +498,7 @@ pub fn gen_stmts<'ctx>(
             None => continue,
         }
     }
+    ctx.pop_scope();
     Ok(None)
 }
 

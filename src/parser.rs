@@ -9,7 +9,7 @@ use chumsky::{
     extra::Err,
     prelude::*,
     span::WrappingSpan,
-    text::{ascii::ident, keyword},
+    text::{ascii::ident, keyword, newline},
 };
 
 use crate::types::TypeID;
@@ -58,6 +58,11 @@ pub enum Stmt {
         then: Vec<Spanned<Stmt>>,
         elifs: Vec<(Spanned<Expr>, Vec<Spanned<Stmt>>)>,
         else_block: Option<Vec<Spanned<Stmt>>>,
+    },
+    For {
+        looper: Spanned<String>,
+        loopee: Spanned<Expr>,
+        block: Vec<Spanned<Stmt>>,
     },
     Expr(Spanned<Box<Expr>>),
 }
@@ -146,6 +151,19 @@ pub trait GenericParser<'src, R>: Parser<'src, &'src str, R, extra::Err<Rich<'sr
 impl<'src, R, P: Parser<'src, &'src str, R, extra::Err<Rich<'src, char>>>> GenericParser<'src, R>
     for P
 {
+}
+
+pub fn comment<'src>() -> impl GenericParser<'src, ()> {
+    let single = just("//")
+        .padded()
+        .ignore_then(any().and_is(newline().not()).repeated())
+        .then(newline().or(end()))
+        .ignored();
+    let multi = just("/*")
+        .then(any().and_is(just("*/").not()).repeated())
+        .then_ignore(just("*/"))
+        .ignored();
+    single.or(multi).repeated().boxed()
 }
 
 pub fn type_parser<'src>() -> impl GenericParser<'src, ParserType> {
@@ -413,6 +431,7 @@ pub fn stmt<'src>(
         .boxed();
 
     let ret = text::keyword("return")
+        .padded()
         .ignore_then(expr().or_not())
         .then_ignore(just(";").padded())
         .map(|expr| match expr {
@@ -421,6 +440,7 @@ pub fn stmt<'src>(
         });
 
     let while_stmt = text::keyword("while")
+        .padded()
         .ignore_then(expr())
         .then(block.clone())
         .map(|(condition, block)| Stmt::While {
@@ -429,6 +449,7 @@ pub fn stmt<'src>(
         });
 
     let if_stmt = text::keyword("if")
+        .padded()
         .ignore_then(expr())
         .then(block.clone())
         .then(
@@ -446,6 +467,18 @@ pub fn stmt<'src>(
             else_block,
         });
 
+    let for_stmt = keyword("for")
+        .padded()
+        .ignore_then(ident().spanned().padded())
+        .then_ignore(keyword("in"))
+        .then(expr())
+        .then(block.clone())
+        .map(|((looper, loopee), block)| Stmt::For {
+            looper: looper.span.make_wrapped(looper.inner.to_string()),
+            loopee,
+            block,
+        });
+
     let just_expr = expr()
         .then_ignore(just(";").padded())
         .map(|expression| Stmt::Expr(expression.span.make_wrapped(Box::new(expression.inner))));
@@ -458,10 +491,19 @@ pub fn stmt<'src>(
             .map(|_| Stmt::Error(ErrorKind::Unknown)),
     );
 
-    choice((var_decl(), ret, set, while_stmt, if_stmt, just_expr))
-        .recover_with(recovery)
-        .labelled("statement")
-        .boxed()
+    choice((
+        var_decl(),
+        ret,
+        set,
+        while_stmt,
+        if_stmt,
+        for_stmt,
+        just_expr,
+    ))
+    .recover_with(recovery)
+    .then_ignore(comment())
+    .labelled("statement")
+    .boxed()
 }
 
 pub fn block<'src>()
@@ -505,7 +547,7 @@ pub fn decl<'src>() -> impl Parser<'src, &'src str, Decl, extra::Err<Rich<'src, 
             body,
         })
         .boxed();
-    decl
+    decl.then_ignore(comment())
 }
 
 pub fn program<'src>() -> impl Parser<'src, &'src str, Program, extra::Err<Rich<'src, char>>> {

@@ -2,7 +2,6 @@
 
 fn main {
     var array = [1, 2, 3];
-    array.push(5);
     if false {
         print("hello");
     }
@@ -12,7 +11,8 @@ fn main {
     else {
         print("nevermind");
     }
-    print(array[3].to_string());
+    for item in array {
+    }
 }
 
 fn test(x: Int) -> Int {
