@@ -52,7 +52,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     ctx.builder.build_return(Some(&ctx.int(0))).unwrap();
 
     main_val.verify(true);
-    ctx.module.print_to_stderr();
+    //ctx.module.print_to_stderr();
     ctx.module.verify().unwrap();
 
     compile(&ctx);

@@ -1,10 +1,11 @@
 class Test(x: Int) {
-    fn init {
-
+    fn test {
+        x;
     }
 }
 
 fn main {
+    Test(1);
     var array = [1, 2, 3];
     if false {
         print("hello");

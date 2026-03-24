@@ -11,21 +11,21 @@ use chumsky::span::{SimpleSpan, Spanned, WrappingSpan};
 use inkwell::{
     context::Context,
     module::Linkage,
-    types::{AnyType, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType},
+    types::{AnyType, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, StructType},
     values::{BasicValue, BasicValueEnum, FunctionValue},
 };
 
 use crate::{
     bool::Bool,
     callable::{Callable, Function},
-    classes::{ClassInfo, ClassMember},
+    classes::{Class, ClassInfo, ClassMember},
     context::LanguageContext,
     int::Int,
     parser::{Atom, Decl, Expr, ParseLiteral, ParserType, Primary, Program, Stmt},
     string::Str,
     types::{BasicBuiltin, Metatype, MetatypeBuilder, TypeID},
     unit::Unit,
-    value::{Field, Literal, Value, ValueEnum, any_to_basic},
+    value::{Copyable, Field, Literal, Value, ValueEnum, any_to_basic},
     vector::Vector,
 };
 
@@ -242,13 +242,7 @@ pub fn gen_if<'ctx>(
             );
 
             ctx.builder.position_at_end(truthy_block);
-            let mut if_returns = gen_stmts(
-                ctx,
-                then,
-                function,
-                returns.clone(),
-                returns_spanned.clone(),
-            )?;
+            let mut if_returns = gen_stmts(ctx, then, function, &returns, returns_spanned.clone())?;
             if if_returns.is_none() {
                 ctx.builder.build_unconditional_branch(continued_block);
             }
@@ -281,7 +275,7 @@ pub fn gen_if<'ctx>(
                     ctx,
                     else_block.as_ref().unwrap(),
                     function,
-                    returns,
+                    &returns,
                     returns_spanned,
                 )?;
                 if_returns = if if_returns.is_some() {
@@ -374,7 +368,7 @@ pub fn gen_stmt<'ctx>(
                 .unwrap();
             ctx.builder.position_at_end(loop_block);
 
-            let returns = gen_stmts(ctx, inner, function, returns, returns_spanned)?;
+            let returns = gen_stmts(ctx, inner, function, &returns, returns_spanned)?;
             if returns.is_none() {
                 ctx.builder.build_unconditional_branch(cond_block);
             } // TODO: Warning here
@@ -430,7 +424,7 @@ pub fn gen_stmt<'ctx>(
 
             let vec_item = as_vec.get(ctx, &ind_val, &looper.inner);
             ctx.add_field(&looper.inner, Field::new(vec_item, &looper.inner));
-            let returns = gen_stmts(ctx, block, function, returns, returns_spanned)?;
+            let returns = gen_stmts(ctx, block, function, &returns, returns_spanned)?;
             if returns.is_none() {
                 ctx.builder.build_store(
                     ind,
@@ -462,7 +456,7 @@ pub fn gen_stmts<'ctx>(
     ctx: &mut LanguageContext<'ctx>,
     stmts: &Vec<Spanned<Stmt>>,
     function: FunctionValue<'ctx>,
-    returns: TypeID,
+    returns: &TypeID,
     returns_spanned: Option<ParserType>,
 ) -> Result<Option<ValueEnum<'ctx>>, CompileError> {
     ctx.push_scope();
@@ -475,7 +469,7 @@ pub fn gen_stmts<'ctx>(
             returns_spanned.clone(),
         )? {
             Some(ret) => {
-                if ret.get_type(ctx) != returns {
+                if &ret.get_type(ctx) != returns {
                     let mut out = CompileError::new(
                         stmt.span,
                         &format!("Incorrect return type, expected `{}`", returns),
@@ -508,6 +502,7 @@ pub fn gen_decl_pre<'ctx>(
     llvm_ctx: &'ctx Context,
     ctx: &mut LanguageContext<'ctx>,
     decl: &Decl,
+    inside: Option<(TypeID, StructType<'ctx>)>,
 ) -> Result<(), CompileError> {
     match decl {
         Decl::Function {
@@ -527,14 +522,17 @@ pub fn gen_decl_pre<'ctx>(
             for (name, typ) in params {
                 ctx.get_with_gen(llvm_ctx, typ.span.make_wrapped(typ.to_typeid()))?;
             }
-            let param_types = params
-                .iter()
-                .map(|(_, t)| {
-                    any_to_basic(ctx.get(t.to_typeid()).storage_type)
+            let mut param_types = Vec::<BasicMetadataTypeEnum>::new();
+            if inside.is_some() {
+                param_types.push(inside.as_ref().unwrap().1.into());
+            }
+            for (_, typ) in params {
+                param_types.push(
+                    any_to_basic(ctx.get(typ.to_typeid()).storage_type)
                         .unwrap()
-                        .into()
-                })
-                .collect::<Vec<_>>();
+                        .into(),
+                );
+            }
             let llvm_function_type = if returns.is_some() {
                 let returns = returns.clone().unwrap();
                 let returns = any_to_basic(
@@ -549,20 +547,16 @@ pub fn gen_decl_pre<'ctx>(
             let llvm_function =
                 ctx.module
                     .add_function(&format!("User__{}", name.inner), llvm_function_type, None);
-            let function_type = TypeID::new(
-                "Function",
-                vec![
-                    TypeID::new(
-                        "Tuple",
-                        params.iter().map(|(_, typ)| typ.to_typeid()).collect(),
-                    ),
-                    if returns.is_some() {
-                        returns.as_ref().unwrap().to_typeid()
-                    } else {
-                        TypeID::from_base("Unit")
-                    },
-                ],
+            let params_typeid = TypeID::new(
+                "Tuple",
+                params.iter().map(|(_, typ)| typ.to_typeid()).collect(),
             );
+            let returns_typeid = if returns.is_some() {
+                returns.as_ref().unwrap().to_typeid()
+            } else {
+                TypeID::from_base("Unit")
+            };
+            let function_type = TypeID::new("Function", vec![params_typeid, returns_typeid]);
             let function = Function::from_function(llvm_ctx, ctx, llvm_function, function_type);
             ctx.add_field(
                 &name.inner,
@@ -611,11 +605,11 @@ pub fn gen_decl<'ctx>(
                 ctx.add_field(&name.inner, Field::new(value, &name.inner));
             }
 
-            let mut returns_val = gen_stmts(
+            let returns_val = gen_stmts(
                 ctx,
                 &body.inner,
                 function,
-                returns.clone(),
+                &returns,
                 returns_spanned.clone(),
             )?;
 
@@ -671,15 +665,26 @@ pub fn gen_decl<'ctx>(
                 );
             }
 
-            gen_decls_pre(ctx, decls);
+            let mut builder = MetatypeBuilder::new(
+                ctx,
+                BasicBuiltin::Class,
+                TypeID::from_base(name),
+                None,
+                ctx.types.ptr.into(),
+                false,
+            );
+
+            gen_decls_pre(ctx, decls, Some((TypeID::from_base(name), class_struct)));
 
             let mut members = HashMap::<String, ClassMember>::new();
             let mut functions = HashMap::<String, Function<'ctx>>::new();
+            let mut functions_decls = HashMap::<String, (Function<'ctx>, &Decl)>::new();
 
             let scope = ctx.current_scope();
-            for (name, field) in scope {
+            for ((name, field), decl) in scope.iter().zip(decls) {
                 if let Some(function) = field.value.clone().try_as_function() {
-                    functions.insert(name.clone(), function);
+                    functions.insert(name.clone(), function.clone());
+                    functions_decls.insert(name.clone(), (function, decl));
                 } // else {
                 //     body.push(
                 //         any_to_basic(ctx.get(field.value.get_type(ctx)).storage_type).unwrap(),
@@ -696,18 +701,13 @@ pub fn gen_decl<'ctx>(
             class_struct.set_body(&body, false);
 
             let malloc = ctx.module.get_function("GC_malloc").unwrap();
-            let mem =
-                ctx.build_call_returns(malloc, &[class_struct.size_of().unwrap().into()], "out");
+            let mem = ctx
+                .build_call_returns(malloc, &[class_struct.size_of().unwrap().into()], "out")
+                .into_pointer_value();
 
             let mut member_index = 0;
             for ((name, _), val) in params.iter().zip(init_llvm_fn.get_params()) {
-                ctx.build_ptr_store(
-                    class_struct,
-                    mem.into_pointer_value(),
-                    val,
-                    member_index,
-                    name,
-                );
+                ctx.build_ptr_store(class_struct, mem, val, member_index, name);
                 member_index += 1;
             }
 
@@ -725,27 +725,90 @@ pub fn gen_decl<'ctx>(
             ctx.builder.build_return(Some(&mem));
             ctx.builder.position_at_end(old_block);
 
-            let class_info = ClassInfo::new(class_struct, members, functions);
-            let mut builder = MetatypeBuilder::new(
-                ctx,
-                BasicBuiltin::Class,
-                TypeID::from_base(name),
-                None,
-                ctx.types.ptr.into(),
-                false,
-            );
+            let class_info = ClassInfo::new(class_struct, members.clone(), functions);
             builder.add_class_info(class_info);
+            builder.build(llvm_ctx, ctx, vec![]);
 
-            gen_decls(ctx, decls);
+            for (name, (function, decl)) in functions_decls {
+                let function_val = ctx.module.get_function(&format!("User__{name}")).unwrap();
+                let old_block = ctx.begin_function(function_val);
+                ctx.push_scope();
+
+                match decl {
+                    Decl::Function {
+                        name,
+                        generics,
+                        params,
+                        returns,
+                        body,
+                    } => {
+                        let returns_spanned = returns;
+                        let returns = match returns {
+                            Some(returns) => returns.to_typeid(),
+                            None => TypeID::from_base("Unit"),
+                        };
+
+                        println!("{}", function_val);
+                        let obj = function_val.get_first_param().unwrap().into_pointer_value();
+                        for (name, member) in members.clone() {
+                            let value = ctx.build_ptr_load(
+                                class_struct,
+                                member.typ.clone(),
+                                obj,
+                                member.index,
+                                &name,
+                            );
+                            let value = ValueEnum::from_val(ctx, value, member.typ, &name);
+                            ctx.add_field(&name, Field::new(value, &name));
+                        }
+                        // TODO: add member functions
+                        for ((name, typ), value) in
+                            params.iter().zip(function_val.get_params()).skip(1)
+                        {
+                            value.set_name(name);
+                            let value = ValueEnum::from_val(ctx, value, typ.to_typeid(), name);
+                            ctx.add_field(name, Field::new(value, name));
+                        }
+
+                        let returns_val = gen_stmts(
+                            ctx,
+                            &body.inner,
+                            function_val,
+                            &returns,
+                            returns_spanned.clone(),
+                        )?;
+
+                        if returns_val.is_none() {
+                            if returns != TypeID::from_base("Unit") {
+                                return Err(CompileError::with_notes(
+                                    body.span,
+                                    "Function does not always return.",
+                                    returns_spanned.as_ref().unwrap().span,
+                                    "Return type specified here.",
+                                ));
+                            }
+                            ctx.builder.build_return(None);
+                        }
+                    }
+                    _ => panic!(),
+                }
+
+                ctx.pop_scope();
+                ctx.builder.position_at_end(old_block); // TODO: A lot of duplicate code here.
+            }
 
             Ok(())
         }
     }
 }
 
-pub fn gen_decls_pre<'ctx>(ctx: &mut LanguageContext<'ctx>, decls: &Vec<Decl>) {
+pub fn gen_decls_pre<'ctx>(
+    ctx: &mut LanguageContext<'ctx>,
+    decls: &Vec<Decl>,
+    inside: Option<(TypeID, StructType<'ctx>)>,
+) {
     for decl in decls {
-        match gen_decl_pre(ctx.context, ctx, decl) {
+        match gen_decl_pre(ctx.context, ctx, decl, inside.clone()) {
             Ok(_) => continue,
             Err(err) => ctx.error(err),
         }
@@ -781,7 +844,7 @@ pub fn do_codegen<'ctx>(
 
     ctx.init_metatypes(&llvm_ctx);
 
-    gen_decls_pre(ctx, &program.decls);
+    gen_decls_pre(ctx, &program.decls, None);
     gen_decls(ctx, &program.decls);
 
     let main = ctx.get_field_nospan("main");

@@ -16,8 +16,8 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct ClassMember {
-    typ: TypeID,
-    index: u32,
+    pub typ: TypeID,
+    pub index: u32,
 }
 
 impl ClassMember {
