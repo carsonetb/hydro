@@ -98,6 +98,32 @@ impl<'ctx> Function<'ctx> {
             &fn_val.get_name().to_str().unwrap().to_owned(),
         )
     }
+
+    pub fn to_member_function(
+        &self,
+        ctx: &LanguageContext<'ctx>,
+        bound: BasicValueEnum<'ctx>,
+        name: &str,
+    ) -> MemberFunction<'ctx> {
+        let typ = TypeID::new(
+            "MemberFunction",
+            vec![
+                self.args()[0].clone(),
+                TypeID::new("Tuple", self.args()[1..].to_vec()),
+                self.returns(),
+            ],
+        );
+        let fn_struct = ctx.get_struct(typ.clone()).get_undef();
+        let fn_struct = ctx
+            .builder
+            .build_insert_value(fn_struct, bound, 0, &format!("{name}_bound"))
+            .unwrap();
+        let fn_struct = ctx
+            .builder
+            .build_insert_value(fn_struct, self.ptr, 1, &format!("{name}_fn"))
+            .unwrap();
+        MemberFunction::new(ctx, fn_struct.into_struct_value(), typ, name)
+    }
 }
 
 impl<'ctx> Callable<'ctx> for Function<'ctx> {

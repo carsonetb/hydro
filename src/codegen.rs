@@ -547,21 +547,29 @@ pub fn gen_decl_pre<'ctx>(
                 llvm_ctx.void_type().fn_type(&param_types, false)
             };
             let fn_name = if inside.is_some() {
-                format!("User__{}__{}", inside.unwrap(), name.inner)
+                format!("User__{}.{}", inside.clone().unwrap(), name.inner)
             } else {
                 format!("User__{}", name.inner)
             };
             let llvm_function = ctx.module.add_function(&fn_name, llvm_function_type, None);
-            let params_typeid = TypeID::new(
-                "Tuple",
-                params.iter().map(|(_, typ)| typ.to_typeid()).collect(),
-            );
+            let mut generics = if inside.is_some() {
+                vec![inside.clone().unwrap()]
+            } else {
+                vec![]
+            };
+            let params_unbound = params
+                .iter()
+                .map(|(_, typ)| typ.to_typeid())
+                .collect::<Vec<_>>();
+            generics.extend(params_unbound.clone());
+            let params_typeid = TypeID::new("Tuple", generics);
             let returns_typeid = if returns.is_some() {
                 returns.as_ref().unwrap().to_typeid()
             } else {
                 TypeID::from_base("Unit")
             };
-            let function_type = TypeID::new("Function", vec![params_typeid, returns_typeid]);
+            let function_type =
+                TypeID::new("Function", vec![params_typeid, returns_typeid.clone()]);
             let function = Function::from_function(llvm_ctx, ctx, llvm_function, function_type);
             ctx.add_field(
                 &name.inner,
@@ -672,15 +680,6 @@ pub fn gen_decl<'ctx>(
 
             let old_block = ctx.begin_function(init_llvm_fn);
 
-            let mut body = Vec::<BasicTypeEnum<'ctx>>::new();
-            for ((name, typ), val) in params.iter().zip(init_llvm_fn.get_params()) {
-                body.push(val.get_type());
-                ctx.add_field(
-                    name,
-                    Field::new(ValueEnum::from_val(ctx, val, typ.to_typeid(), name), name),
-                );
-            }
-
             let mut builder = MetatypeBuilder::new(
                 ctx,
                 BasicBuiltin::Class,
@@ -693,26 +692,37 @@ pub fn gen_decl<'ctx>(
 
             gen_decls_pre(ctx, decls, Some(TypeID::from_base(name)));
 
+            let mut body = Vec::<BasicTypeEnum<'ctx>>::new();
             let mut members = BTreeMap::<String, ClassMember>::new();
             let mut functions = BTreeMap::<String, Function<'ctx>>::new();
             let mut functions_decls = BTreeMap::<String, (Function<'ctx>, &Decl)>::new();
 
-            let scope = ctx.current_scope();
-            for ((name, field), decl) in scope.iter().zip(decls) {
-                if let Some(function) = field.value.clone().try_as_function() {
-                    functions.insert(name.clone(), function.clone());
-                    functions_decls.insert(name.clone(), (function, decl));
-                } // else {
-                //     body.push(
-                //         any_to_basic(ctx.get(field.value.get_type(ctx)).storage_type).unwrap(),
-                //     );
-                //     members[name] = ClassMember::new(field.value.get_type(ctx), member_index);
-                //     member_index += 1;
-                // }
+            {
+                let scope = ctx.current_scope();
+                for ((name, field), decl) in scope.iter().zip(decls) {
+                    if let Some(function) = field.value.clone().try_as_function() {
+                        functions.insert(name.clone(), function.clone());
+                        functions_decls.insert(name.clone(), (function, decl));
+                    } // else {
+                    //     body.push(
+                    //         any_to_basic(ctx.get(field.value.get_type(ctx)).storage_type).unwrap(),
+                    //     );
+                    //     members[name] = ClassMember::new(field.value.get_type(ctx), member_index);
+                    //     member_index += 1;
+                    // }
+                }
+
+                if scope.len() == 0 {
+                    body.push(ctx.types.bool.into());
+                }
             }
 
-            if scope.len() == 0 {
-                body.push(ctx.types.bool.into());
+            for ((name, typ), val) in params.iter().zip(init_llvm_fn.get_params()) {
+                body.push(val.get_type());
+                ctx.add_field(
+                    name,
+                    Field::new(ValueEnum::from_val(ctx, val, typ.to_typeid(), name), name),
+                );
             }
 
             class_struct.set_body(&body, false);
@@ -753,10 +763,19 @@ pub fn gen_decl<'ctx>(
             for (fn_name, (function, decl)) in functions_decls {
                 let function_val = ctx
                     .module
-                    .get_function(&format!("User__{}__{fn_name}", name.inner))
+                    .get_function(&format!("User__{}.{fn_name}", name.inner))
                     .unwrap();
                 let old_block = ctx.begin_function(function_val);
                 ctx.push_scope();
+
+                ctx.get_with_gen_ext(TypeID::new(
+                    "MemberFunction",
+                    vec![
+                        function.args()[0].clone(),
+                        TypeID::new("Tuple", function.args()[1..].to_vec()),
+                        function.returns(),
+                    ],
+                ));
 
                 match decl {
                     Decl::Function {

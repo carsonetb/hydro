@@ -68,7 +68,9 @@ impl<'ctx> Value<'ctx> for Class<'ctx> {
     ) -> Result<ValueEnum<'ctx>, CompileError> {
         let info = self.info(ctx);
         if info.functions.contains_key(&name.inner) {
-            return Ok(ValueEnum::Function(info.functions[&name.inner].clone()));
+            return Ok(ValueEnum::MemberFunction(
+                info.functions[&name.inner].to_member_function(ctx, self.ptr.into(), into),
+            ));
         }
         let member = info.members.get(&name.inner).ok_or_else(|| {
             CompileError::new(
