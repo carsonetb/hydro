@@ -314,6 +314,23 @@ impl<'ctx> LanguageContext<'ctx> {
         let dest_ptr = self.builder.build_struct_gep(typ, ptr, ind, name).unwrap();
         self.builder.build_store(dest_ptr, val).unwrap();
     }
+
+    pub fn build_ptr_load(
+        &self,
+        typ: StructType<'ctx>,
+        member_typ: TypeID,
+        ptr: PointerValue<'ctx>,
+        ind: u32,
+        name: &str,
+    ) -> BasicValueEnum<'ctx> {
+        let ptr = self
+            .builder
+            .build_struct_gep(typ, ptr, ind, &format!("{name}_ptr"))
+            .unwrap();
+        self.builder
+            .build_load(self.get_storage(member_typ), ptr, name)
+            .unwrap()
+    }
 }
 
 pub struct LLVMTypes<'ctx> {

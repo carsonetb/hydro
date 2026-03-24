@@ -1,4 +1,8 @@
+class Test(x: Int) {
+    fn init {
 
+    }
+}
 
 fn main {
     var array = [1, 2, 3];

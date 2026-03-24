@@ -1,5 +1,6 @@
 use std::{
     any::Any,
+    collections::HashMap,
     fs::File,
     io::Read,
     path::{Path, PathBuf},
@@ -10,18 +11,19 @@ use chumsky::span::{SimpleSpan, Spanned, WrappingSpan};
 use inkwell::{
     context::Context,
     module::Linkage,
-    types::{AnyType, BasicType, FunctionType},
+    types::{AnyType, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType},
     values::{BasicValue, BasicValueEnum, FunctionValue},
 };
 
 use crate::{
     bool::Bool,
     callable::{Callable, Function},
+    classes::{ClassInfo, ClassMember},
     context::LanguageContext,
     int::Int,
     parser::{Atom, Decl, Expr, ParseLiteral, ParserType, Primary, Program, Stmt},
     string::Str,
-    types::{Metatype, TypeID},
+    types::{BasicBuiltin, Metatype, MetatypeBuilder, TypeID},
     unit::Unit,
     value::{Field, Literal, Value, ValueEnum, any_to_basic},
     vector::Vector,
@@ -569,6 +571,11 @@ pub fn gen_decl_pre<'ctx>(
 
             Ok(())
         }
+        Decl::Class {
+            name,
+            params,
+            decls,
+        } => Ok(()),
     }
 }
 
@@ -628,6 +635,129 @@ pub fn gen_decl<'ctx>(
 
             Ok(())
         }
+        Decl::Class {
+            name,
+            params,
+            decls,
+        } => {
+            ctx.push_scope();
+
+            let class_struct = ctx
+                .context
+                .opaque_struct_type(&format!("User__{}", name.inner));
+
+            let init_llvm_type = ctx.types.ptr.fn_type(
+                &params
+                    .iter()
+                    .map(|(_, typ)| {
+                        any_to_basic(ctx.get(typ.to_typeid()).storage_type)
+                            .unwrap()
+                            .into()
+                    })
+                    .collect::<Vec<_>>(),
+                false,
+            );
+            let init_llvm_fn =
+                ctx.add_function(&format!("User__{}.()", name.inner), init_llvm_type);
+
+            let old_block = ctx.begin_function(init_llvm_fn);
+
+            let mut body = Vec::<BasicTypeEnum<'ctx>>::new();
+            for ((name, typ), val) in params.iter().zip(init_llvm_fn.get_params()) {
+                body.push(val.get_type());
+                ctx.add_field(
+                    name,
+                    Field::new(ValueEnum::from_val(ctx, val, typ.to_typeid(), name), name),
+                );
+            }
+
+            gen_decls_pre(ctx, decls);
+
+            let mut members = HashMap::<String, ClassMember>::new();
+            let mut functions = HashMap::<String, Function<'ctx>>::new();
+
+            let scope = ctx.current_scope();
+            for (name, field) in scope {
+                if let Some(function) = field.value.clone().try_as_function() {
+                    functions.insert(name.clone(), function);
+                } // else {
+                //     body.push(
+                //         any_to_basic(ctx.get(field.value.get_type(ctx)).storage_type).unwrap(),
+                //     );
+                //     members[name] = ClassMember::new(field.value.get_type(ctx), member_index);
+                //     member_index += 1;
+                // }
+            }
+
+            if scope.len() == 0 {
+                body.push(ctx.types.bool.into());
+            }
+
+            class_struct.set_body(&body, false);
+
+            let malloc = ctx.module.get_function("GC_malloc").unwrap();
+            let mem =
+                ctx.build_call_returns(malloc, &[class_struct.size_of().unwrap().into()], "out");
+
+            let mut member_index = 0;
+            for ((name, _), val) in params.iter().zip(init_llvm_fn.get_params()) {
+                ctx.build_ptr_store(
+                    class_struct,
+                    mem.into_pointer_value(),
+                    val,
+                    member_index,
+                    name,
+                );
+                member_index += 1;
+            }
+
+            if functions.contains_key("init") {
+                let init_type = ctx.types.void.fn_type(&[ctx.types.ptr.into()], false);
+                ctx.builder.build_indirect_call(
+                    init_type,
+                    functions["init"].ptr,
+                    &[mem.into()],
+                    "UNUSED",
+                );
+            }
+
+            ctx.pop_scope();
+            ctx.builder.build_return(Some(&mem));
+            ctx.builder.position_at_end(old_block);
+
+            let class_info = ClassInfo::new(class_struct, members, functions);
+            let mut builder = MetatypeBuilder::new(
+                ctx,
+                BasicBuiltin::Class,
+                TypeID::from_base(name),
+                None,
+                ctx.types.ptr.into(),
+                false,
+            );
+            builder.add_class_info(class_info);
+
+            gen_decls(ctx, decls);
+
+            Ok(())
+        }
+    }
+}
+
+pub fn gen_decls_pre<'ctx>(ctx: &mut LanguageContext<'ctx>, decls: &Vec<Decl>) {
+    for decl in decls {
+        match gen_decl_pre(ctx.context, ctx, decl) {
+            Ok(_) => continue,
+            Err(err) => ctx.error(err),
+        }
+    }
+}
+
+pub fn gen_decls<'ctx>(ctx: &mut LanguageContext<'ctx>, decls: &Vec<Decl>) {
+    for decl in decls {
+        match gen_decl(ctx.context, ctx, decl) {
+            Ok(_) => continue,
+            Err(err) => ctx.error(err),
+        }
     }
 }
 
@@ -651,19 +781,8 @@ pub fn do_codegen<'ctx>(
 
     ctx.init_metatypes(&llvm_ctx);
 
-    for decl in program.decls.iter() {
-        match gen_decl_pre(llvm_ctx, ctx, decl) {
-            Ok(_) => continue,
-            Err(err) => ctx.error(err),
-        }
-    }
-
-    for decl in program.decls.iter() {
-        match gen_decl(llvm_ctx, ctx, decl) {
-            Ok(_) => continue,
-            Err(err) => ctx.error(err),
-        }
-    }
+    gen_decls_pre(ctx, &program.decls);
+    gen_decls(ctx, &program.decls);
 
     let main = ctx.get_field_nospan("main");
     match main {

@@ -2,6 +2,7 @@
 
 mod bool;
 mod callable;
+mod classes;
 mod codegen;
 mod compile;
 mod context;

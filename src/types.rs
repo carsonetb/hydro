@@ -8,6 +8,8 @@ use inkwell::{
 };
 
 use crate::{
+    callable::Function,
+    classes::{ClassInfo, ClassMember},
     codegen::CompileError,
     context::LanguageContext,
     value::{Field, Value, ValueEnum, ValueStatic, any_to_basic},
@@ -24,6 +26,7 @@ pub enum BasicBuiltin {
     Vector,
     Function,
     MemberFunction,
+    Class,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -79,13 +82,14 @@ pub struct Metatype<'ctx> {
     pub id: TypeID,
     pub inherits: Vec<TypeID>,
     pub generics: Vec<TypeID>,
-    members: HashMap<String, Member<'ctx>>,
+    pub members: HashMap<String, Member<'ctx>>,
     static_ptr: PointerValue<'ctx>,
     pub static_struct: StructType<'ctx>,
     pub obj_struct: Option<StructType<'ctx>>,
     pub storage_type: AnyTypeEnum<'ctx>,
     pub is_refcounted: bool,
     pub initializer: Option<FunctionValue<'ctx>>,
+    pub class_info: Option<ClassInfo<'ctx>>,
 }
 
 impl<'ctx> Metatype<'ctx> {}
@@ -184,6 +188,7 @@ pub struct MetatypeBuilder<'ctx> {
     is_refcounted: bool,
     inherits: Vec<TypeID>,
     pub initializer: Option<FunctionValue<'ctx>>,
+    class_info: Option<ClassInfo<'ctx>>,
 }
 
 impl<'ctx> MetatypeBuilder<'ctx> {
@@ -206,6 +211,7 @@ impl<'ctx> MetatypeBuilder<'ctx> {
             inherits: Vec::<TypeID>::new(),
             is_refcounted,
             initializer: None,
+            class_info: None,
         }
     }
 
@@ -222,6 +228,10 @@ impl<'ctx> MetatypeBuilder<'ctx> {
             name: name.to_string(),
             val,
         });
+    }
+
+    pub fn add_class_info(&mut self, info: ClassInfo<'ctx>) {
+        self.class_info = Some(info);
     }
 
     pub fn build(
@@ -284,6 +294,7 @@ impl<'ctx> MetatypeBuilder<'ctx> {
             obj_struct: self.obj_struct,
             is_refcounted: self.is_refcounted,
             initializer: self.initializer,
+            class_info: self.class_info.clone(),
         };
 
         ctx.metatypes.insert(self.id.clone(), Some(out));

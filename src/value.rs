@@ -10,6 +10,7 @@ use strum_macros::EnumTryAs;
 use crate::{
     bool::Bool,
     callable::{Function, MemberFunction},
+    classes::Class,
     codegen::CompileError,
     context::LanguageContext,
     int::Int,
@@ -75,6 +76,7 @@ pub enum ValueEnum<'ctx> {
     Vector(Vector<'ctx>),
     Function(Function<'ctx>),
     MemberFunction(MemberFunction<'ctx>),
+    Class(Class<'ctx>),
 }
 
 impl<'ctx> ValueEnum<'ctx> {
@@ -96,6 +98,7 @@ impl<'ctx> ValueEnum<'ctx> {
                 Self::MemberFunction(MemberFunction::from_val(ctx, val, typ, name))
             }
             BasicBuiltin::Vector => Self::Vector(Vector::from_val(ctx, val, typ, name)),
+            BasicBuiltin::Class => Self::Class(Class::from_val(ctx, val, typ, name)),
         }
     }
 }

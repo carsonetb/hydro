@@ -34,6 +34,11 @@ pub enum Decl {
         returns: Option<ParserType>,
         body: Spanned<Vec<Spanned<Stmt>>>,
     },
+    Class {
+        name: Spanned<String>,
+        params: Vec<(Spanned<String>, ParserType)>,
+        decls: Vec<Decl>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -517,37 +522,57 @@ pub fn block<'src>()
     })
 }
 
-pub fn decl<'src>() -> impl Parser<'src, &'src str, Decl, extra::Err<Rich<'src, char>>> {
-    let decl = text::keyword("fn")
+pub fn params<'src>()
+-> impl Parser<'src, &'src str, Vec<(Spanned<String>, ParserType)>, extra::Err<Rich<'src, char>>> {
+    text::ident()
+        .spanned()
         .padded()
-        .ignore_then(text::ident().spanned().padded()) // TODO: Function generic params.
-        .then(
-            text::ident()
-                .spanned()
-                .padded()
-                .then_ignore(just(":").padded())
-                .then(type_parser())
-                .map(|(name, typ)| (name.span.make_wrapped(name.inner.to_string()), typ))
-                .separated_by(just(",").padded())
-                .collect::<Vec<_>>()
-                .delimited_by(just("("), just(")"))
-                .or_not(),
-        )
-        .then(just("->").padded().ignore_then(type_parser()).or_not())
-        .then(block().spanned())
-        .map(|(((name, params), returns), body)| Decl::Function {
-            name: name.span.make_wrapped(name.inner.to_string()),
-            generics: vec![],
-            params: if params.is_some() {
-                params.unwrap()
-            } else {
-                vec![]
-            },
-            returns,
-            body,
-        })
-        .boxed();
-    decl.then_ignore(comment())
+        .then_ignore(just(":").padded())
+        .then(type_parser())
+        .map(|(name, typ)| (name.span.make_wrapped(name.inner.to_string()), typ))
+        .separated_by(just(",").padded())
+        .collect::<Vec<_>>()
+        .delimited_by(just("(").padded(), just(")").padded())
+}
+
+pub fn decl<'src>() -> impl Parser<'src, &'src str, Decl, extra::Err<Rich<'src, char>>> {
+    recursive(|decl| {
+        let function = text::keyword("fn")
+            .padded()
+            .ignore_then(text::ident().spanned().padded()) // TODO: Function generic params.
+            .then(params().or_not())
+            .then(just("->").padded().ignore_then(type_parser()).or_not())
+            .then(block().spanned())
+            .map(|(((name, params), returns), body)| Decl::Function {
+                name: name.span.make_wrapped(name.inner.to_string()),
+                generics: vec![],
+                params: match params {
+                    Some(params) => params,
+                    None => vec![],
+                },
+                returns,
+                body,
+            })
+            .boxed();
+        let class = keyword("class")
+            .padded()
+            .ignore_then(ident().spanned())
+            .then(params().or_not())
+            .then(
+                decl.repeated()
+                    .collect::<Vec<_>>()
+                    .delimited_by(just("{").padded(), just("}").padded()),
+            )
+            .map(|((name, params), decls)| Decl::Class {
+                name: name.span.make_wrapped(name.inner.to_string()),
+                params: match params {
+                    Some(params) => params,
+                    None => vec![],
+                },
+                decls,
+            });
+        choice((function, class)).then_ignore(comment()).boxed()
+    })
 }
 
 pub fn program<'src>() -> impl Parser<'src, &'src str, Program, extra::Err<Rich<'src, char>>> {
