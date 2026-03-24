@@ -77,6 +77,7 @@ pub enum ValueEnum<'ctx> {
     Function(Function<'ctx>),
     MemberFunction(MemberFunction<'ctx>),
     Class(Class<'ctx>),
+    Type(Metatype<'ctx>),
 }
 
 impl<'ctx> ValueEnum<'ctx> {

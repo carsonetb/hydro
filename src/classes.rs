@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use chumsky::span::Spanned;
 use inkwell::{
@@ -29,15 +29,15 @@ impl ClassMember {
 #[derive(Debug, Clone)]
 pub struct ClassInfo<'ctx> {
     class_struct: StructType<'ctx>,
-    members: HashMap<String, ClassMember>,
-    functions: HashMap<String, Function<'ctx>>,
+    members: BTreeMap<String, ClassMember>,
+    functions: BTreeMap<String, Function<'ctx>>,
 }
 
 impl<'ctx> ClassInfo<'ctx> {
     pub fn new(
         class_struct: StructType<'ctx>,
-        members: HashMap<String, ClassMember>,
-        functions: HashMap<String, Function<'ctx>>,
+        members: BTreeMap<String, ClassMember>,
+        functions: BTreeMap<String, Function<'ctx>>,
     ) -> Self {
         Self {
             class_struct,

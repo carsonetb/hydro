@@ -1,11 +1,12 @@
 class Test(x: Int) {
-    fn test {
+    fn cls_fn {
         x;
     }
 }
 
 fn main {
-    Test(1);
+    var x = Test(3);
+    print(x.x.to_string());
     var array = [1, 2, 3];
     if false {
         print("hello");

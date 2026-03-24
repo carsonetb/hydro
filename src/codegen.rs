@@ -1,6 +1,6 @@
 use std::{
     any::Any,
-    collections::HashMap,
+    collections::BTreeMap,
     fs::File,
     io::Read,
     path::{Path, PathBuf},
@@ -135,6 +135,8 @@ pub fn gen_primary<'ctx>(
                     .try_as_member_function()
                     .unwrap()
                     .call(ctx, args_eval, into_name))
+            } else if on_eval.clone().try_as_type().is_some() {
+                Ok(on_eval.try_as_type().unwrap().initializer.unwrap().call(ctx, args_eval, into_name))
             } else {
                 Err(CompileError::new(
                     on.span,
@@ -502,7 +504,7 @@ pub fn gen_decl_pre<'ctx>(
     llvm_ctx: &'ctx Context,
     ctx: &mut LanguageContext<'ctx>,
     decl: &Decl,
-    inside: Option<(TypeID, StructType<'ctx>)>,
+    inside: Option<TypeID>,
 ) -> Result<(), CompileError> {
     match decl {
         Decl::Function {
@@ -524,7 +526,7 @@ pub fn gen_decl_pre<'ctx>(
             }
             let mut param_types = Vec::<BasicMetadataTypeEnum>::new();
             if inside.is_some() {
-                param_types.push(inside.as_ref().unwrap().1.into());
+                param_types.push(ctx.types.ptr.into());
             }
             for (_, typ) in params {
                 param_types.push(
@@ -544,9 +546,12 @@ pub fn gen_decl_pre<'ctx>(
             } else {
                 llvm_ctx.void_type().fn_type(&param_types, false)
             };
-            let llvm_function =
-                ctx.module
-                    .add_function(&format!("User__{}", name.inner), llvm_function_type, None);
+            let fn_name = if inside.is_some() {
+                format!("User__{}__{}", inside.unwrap(), name.inner)
+            } else {
+                format!("User__{}", name.inner)
+            };
+            let llvm_function = ctx.module.add_function(&fn_name, llvm_function_type, None);
             let params_typeid = TypeID::new(
                 "Tuple",
                 params.iter().map(|(_, typ)| typ.to_typeid()).collect(),
@@ -653,6 +658,17 @@ pub fn gen_decl<'ctx>(
             );
             let init_llvm_fn =
                 ctx.add_function(&format!("User__{}.()", name.inner), init_llvm_type);
+            let init_type = TypeID::new(
+                "Function",
+                vec![
+                    TypeID::new(
+                        "Tuple",
+                        params.iter().map(|(name, typ)| typ.to_typeid()).collect(),
+                    ),
+                    TypeID::from_base(name),
+                ],
+            );
+            let init_fn = Function::from_function(ctx.context, ctx, init_llvm_fn, init_type);
 
             let old_block = ctx.begin_function(init_llvm_fn);
 
@@ -673,12 +689,13 @@ pub fn gen_decl<'ctx>(
                 ctx.types.ptr.into(),
                 false,
             );
+            builder.add_initializer(init_fn);
 
-            gen_decls_pre(ctx, decls, Some((TypeID::from_base(name), class_struct)));
+            gen_decls_pre(ctx, decls, Some(TypeID::from_base(name)));
 
-            let mut members = HashMap::<String, ClassMember>::new();
-            let mut functions = HashMap::<String, Function<'ctx>>::new();
-            let mut functions_decls = HashMap::<String, (Function<'ctx>, &Decl)>::new();
+            let mut members = BTreeMap::<String, ClassMember>::new();
+            let mut functions = BTreeMap::<String, Function<'ctx>>::new();
+            let mut functions_decls = BTreeMap::<String, (Function<'ctx>, &Decl)>::new();
 
             let scope = ctx.current_scope();
             for ((name, field), decl) in scope.iter().zip(decls) {
@@ -706,8 +723,12 @@ pub fn gen_decl<'ctx>(
                 .into_pointer_value();
 
             let mut member_index = 0;
-            for ((name, _), val) in params.iter().zip(init_llvm_fn.get_params()) {
+            for ((name, typ), val) in params.iter().zip(init_llvm_fn.get_params()) {
                 ctx.build_ptr_store(class_struct, mem, val, member_index, name);
+                members.insert(
+                    name.inner.clone(),
+                    ClassMember::new(typ.to_typeid(), member_index),
+                );
                 member_index += 1;
             }
 
@@ -729,8 +750,11 @@ pub fn gen_decl<'ctx>(
             builder.add_class_info(class_info);
             builder.build(llvm_ctx, ctx, vec![]);
 
-            for (name, (function, decl)) in functions_decls {
-                let function_val = ctx.module.get_function(&format!("User__{name}")).unwrap();
+            for (fn_name, (function, decl)) in functions_decls {
+                let function_val = ctx
+                    .module
+                    .get_function(&format!("User__{}__{fn_name}", name.inner))
+                    .unwrap();
                 let old_block = ctx.begin_function(function_val);
                 ctx.push_scope();
 
@@ -748,7 +772,6 @@ pub fn gen_decl<'ctx>(
                             None => TypeID::from_base("Unit"),
                         };
 
-                        println!("{}", function_val);
                         let obj = function_val.get_first_param().unwrap().into_pointer_value();
                         for (name, member) in members.clone() {
                             let value = ctx.build_ptr_load(
@@ -805,7 +828,7 @@ pub fn gen_decl<'ctx>(
 pub fn gen_decls_pre<'ctx>(
     ctx: &mut LanguageContext<'ctx>,
     decls: &Vec<Decl>,
-    inside: Option<(TypeID, StructType<'ctx>)>,
+    inside: Option<TypeID>,
 ) {
     for decl in decls {
         match gen_decl_pre(ctx.context, ctx, decl, inside.clone()) {
@@ -816,7 +839,7 @@ pub fn gen_decls_pre<'ctx>(
 }
 
 pub fn gen_decls<'ctx>(ctx: &mut LanguageContext<'ctx>, decls: &Vec<Decl>) {
-    for decl in decls {
+    for decl in decls.iter() {
         match gen_decl(ctx.context, ctx, decl) {
             Ok(_) => continue,
             Err(err) => ctx.error(err),

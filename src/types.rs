@@ -75,7 +75,7 @@ pub struct Member<'ctx> {
     pub value: ValueEnum<'ctx>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Metatype<'ctx> {
     pub base: BasicBuiltin,
     pub class_name: String,
@@ -88,7 +88,7 @@ pub struct Metatype<'ctx> {
     pub obj_struct: Option<StructType<'ctx>>,
     pub storage_type: AnyTypeEnum<'ctx>,
     pub is_refcounted: bool,
-    pub initializer: Option<FunctionValue<'ctx>>,
+    pub initializer: Option<Function<'ctx>>,
     pub class_info: Option<ClassInfo<'ctx>>,
 }
 
@@ -187,7 +187,7 @@ pub struct MetatypeBuilder<'ctx> {
     static_values: Vec<BuilderStaticRepr<'ctx>>,
     is_refcounted: bool,
     inherits: Vec<TypeID>,
-    pub initializer: Option<FunctionValue<'ctx>>,
+    pub initializer: Option<Function<'ctx>>,
     class_info: Option<ClassInfo<'ctx>>,
 }
 
@@ -213,6 +213,10 @@ impl<'ctx> MetatypeBuilder<'ctx> {
             initializer: None,
             class_info: None,
         }
+    }
+
+    pub fn add_initializer(&mut self, initializer: Function<'ctx>) {
+        self.initializer = Some(initializer)
     }
 
     pub fn add_parent(&mut self, ctx: LanguageContext<'ctx>, id: TypeID) {
@@ -293,10 +297,11 @@ impl<'ctx> MetatypeBuilder<'ctx> {
             storage_type: self.storage_type,
             obj_struct: self.obj_struct,
             is_refcounted: self.is_refcounted,
-            initializer: self.initializer,
+            initializer: self.initializer.clone(),
             class_info: self.class_info.clone(),
         };
 
-        ctx.metatypes.insert(self.id.clone(), Some(out));
+        ctx.metatypes.insert(self.id.clone(), Some(out.clone()));
+        ctx.add_field(&name, Field::new(ValueEnum::Type(out), &name));
     }
 }
