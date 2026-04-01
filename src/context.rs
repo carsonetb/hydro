@@ -1,6 +1,11 @@
-use std::{collections::HashMap, env, path::Path};
+use std::{
+    collections::{BTreeMap, HashMap},
+    env,
+    path::Path,
+};
 
 use chumsky::span::{Spanned, WrappingSpan};
+use indexmap::IndexMap;
 use inkwell::{
     AddressSpace, OptimizationLevel,
     basic_block::BasicBlock,
@@ -31,7 +36,7 @@ use crate::{
     vector::Vector,
 };
 
-pub type ScopeItem<'ctx> = HashMap<String, Field<'ctx>>;
+pub type ScopeItem<'ctx> = IndexMap<String, Field<'ctx>>;
 pub type Scope<'ctx> = Vec<ScopeItem<'ctx>>;
 
 pub struct LanguageContext<'ctx> {

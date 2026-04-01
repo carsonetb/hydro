@@ -53,7 +53,13 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     main_val.verify(true);
     //ctx.module.print_to_stderr();
-    ctx.module.verify().unwrap();
+    if ctx.module.verify().is_err() {
+        // ctx.module.print_to_stderr();
+        println!(
+            "There was an error with the generated LLVM IR. It was printed above for debugging."
+        );
+        ctx.module.verify().unwrap();
+    }
 
     compile(&ctx);
 

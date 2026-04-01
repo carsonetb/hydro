@@ -12,7 +12,7 @@ use crate::{
     context::LanguageContext,
     int::Int,
     types::{BasicBuiltin, MetatypeBuilder, TypeID},
-    value::{Copyable, Literal, Value, ValueEnum, ValueStatic},
+    value::{Copyable, Literal, Value, ValueEnum, ValueRef, ValueStatic},
 };
 
 #[derive(Debug, Clone)]
@@ -96,6 +96,18 @@ impl<'ctx> Value<'ctx> for Bool<'ctx> {
                 &format!("Type `Bool` has no `{}` operator.", name.inner),
             )),
         }
+    }
+
+    fn member_ref(
+        &self,
+        ctx: &LanguageContext<'ctx>,
+        name: Spanned<String>,
+        into: &str,
+    ) -> Result<ValueRef<'ctx>, CompileError> {
+        Err(CompileError::new(
+            name.span,
+            "Cannot get this member as a reference.",
+        ))
     }
 
     fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeID {

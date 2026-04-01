@@ -53,6 +53,11 @@ impl<'ctx> Field<'ctx> {
     }
 }
 
+pub struct ValueRef<'ctx> {
+    pub ptr: PointerValue<'ctx>,
+    pub typ: TypeID,
+}
+
 pub fn any_to_basic<'ctx>(any: AnyTypeEnum<'ctx>) -> Option<BasicTypeEnum<'ctx>> {
     match any {
         AnyTypeEnum::ArrayType(t) => Some(t.as_basic_type_enum()),
@@ -112,6 +117,12 @@ pub trait Value<'ctx> {
         name: Spanned<String>,
         into: &str,
     ) -> Result<ValueEnum<'ctx>, CompileError>;
+    fn member_ref(
+        &self,
+        ctx: &LanguageContext<'ctx>,
+        name: Spanned<String>,
+        into: &str,
+    ) -> Result<ValueRef<'ctx>, CompileError>;
     fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeID;
     fn get_value(&self) -> BasicValueEnum<'ctx>;
     fn construct_ptr(&self, ctx: &LanguageContext<'ctx>, into_name: &str) -> PointerValue<'ctx>;

@@ -8,7 +8,7 @@ use crate::{
     codegen::CompileError,
     context::LanguageContext,
     types::{BasicBuiltin, Metatype, MetatypeBuilder, TypeID},
-    value::{Field, Value, ValueEnum, ValueStatic},
+    value::{Field, Value, ValueEnum, ValueRef, ValueStatic},
 };
 
 #[derive(Clone, Debug)]
@@ -21,6 +21,15 @@ impl<'ctx> Value<'ctx> for Unit {
         _name: Spanned<String>,
         _into: &str,
     ) -> Result<ValueEnum<'ctx>, CompileError> {
+        panic!()
+    }
+
+    fn member_ref(
+        &self,
+        ctx: &LanguageContext<'ctx>,
+        name: Spanned<String>,
+        into: &str,
+    ) -> Result<ValueRef<'ctx>, CompileError> {
         panic!()
     }
 

@@ -27,6 +27,11 @@ pub struct Program {
 
 #[derive(Debug)]
 pub enum Decl {
+    Var {
+        name: Spanned<String>,
+        typ: Option<ParserType>,
+        value: Spanned<Box<Expr>>,
+    },
     Function {
         name: Spanned<String>,
         generics: Vec<GenericParam>,
@@ -51,7 +56,7 @@ pub enum Stmt {
         value: Spanned<Box<Expr>>,
     },
     VarSet {
-        name: Spanned<String>,
+        on: Spanned<Box<Primary>>,
         value: Spanned<Box<Expr>>,
     },
     While {
@@ -422,15 +427,15 @@ pub fn var_decl<'src>() -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'s
 pub fn stmt<'src>(
     block: impl GenericParser<'src, Vec<Spanned<Stmt>>> + Clone + 'src,
 ) -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'src, char>>> + Clone {
-    let set = text::ascii::ident()
+    let set = primary(expr())
         .labelled("var set")
         .padded()
         .spanned()
         .then_ignore(just("="))
         .then(expr())
         .then_ignore(just(";").padded())
-        .map(|(name, value)| Stmt::VarSet {
-            name: name.span.make_wrapped(name.to_string()),
+        .map(|(on, value)| Stmt::VarSet {
+            on: on.span.make_wrapped(on.inner.inner),
             value: value.span.make_wrapped(Box::new(value.inner)),
         })
         .boxed();
@@ -537,6 +542,10 @@ pub fn params<'src>()
 
 pub fn decl<'src>() -> impl Parser<'src, &'src str, Decl, extra::Err<Rich<'src, char>>> {
     recursive(|decl| {
+        let var = var_decl().map(|decl| match decl {
+            Stmt::VarDecl { name, typ, value } => Decl::Var { name, typ, value },
+            _ => panic!(),
+        });
         let function = text::keyword("fn")
             .padded()
             .ignore_then(text::ident().spanned().padded()) // TODO: Function generic params.
@@ -571,7 +580,9 @@ pub fn decl<'src>() -> impl Parser<'src, &'src str, Decl, extra::Err<Rich<'src, 
                 },
                 decls,
             });
-        choice((function, class)).then_ignore(comment()).boxed()
+        choice((var, function, class))
+            .then_ignore(comment())
+            .boxed()
     })
 }
 

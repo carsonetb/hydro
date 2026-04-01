@@ -12,7 +12,7 @@ use inkwell::{
     context::Context,
     module::Linkage,
     types::{AnyType, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, StructType},
-    values::{BasicValue, BasicValueEnum, FunctionValue},
+    values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue},
 };
 
 use crate::{
@@ -25,7 +25,7 @@ use crate::{
     string::Str,
     types::{BasicBuiltin, Metatype, MetatypeBuilder, TypeID},
     unit::Unit,
-    value::{Copyable, Field, Literal, Value, ValueEnum, any_to_basic},
+    value::{Copyable, Field, Literal, Value, ValueEnum, ValueRef, any_to_basic},
     vector::Vector,
 };
 
@@ -168,6 +168,34 @@ pub fn gen_primary<'ctx>(
     }
 }
 
+pub fn gen_primary_ref<'ctx>(
+    ctx: &mut LanguageContext<'ctx>,
+    prim: &Primary,
+    into_name: &str,
+) -> Result<ValueRef<'ctx>, CompileError> {
+    match prim {
+        Primary::Atom(atom) => Err(CompileError::with_notes(
+            atom.span,
+            "Cannot get a reference to an Atom.",
+            atom.span,
+            "You are probably trying to set to a non-field value (e.g. 1 = 2, or [1, 2] = 5), which is invalid.",
+        )),
+        Primary::Call { on, generics, args } => Err(CompileError::with_notes(
+            on.span,
+            "Cannot get a reference to the field returned by a function call.",
+            on.span,
+            "This could technically be valid if the function returned a field, but that would have to be explicit which is not supported.",
+        )),
+        Primary::Member { on, name } => {
+            let on = gen_primary(ctx, on, &format!("{into_name}_on"))?;
+            on.member_ref(ctx, name.clone(), into_name)
+        }
+        Primary::Slice { on, expr } => {
+            Err(CompileError::new(on.span, "Cannot yet set to a slice."))
+        }
+    }
+}
+
 pub fn gen_expr<'ctx>(
     ctx: &mut LanguageContext<'ctx>,
     expr: &Expr,
@@ -298,6 +326,37 @@ pub fn gen_if<'ctx>(
     }
 }
 
+pub fn gen_var_decl<'ctx>(
+    ctx: &mut LanguageContext<'ctx>,
+    name: &Spanned<String>,
+    typ: &Option<ParserType>,
+    value: &Spanned<Box<Expr>>,
+) -> Result<Option<ValueEnum<'ctx>>, CompileError> {
+    let eval = gen_expr(ctx, value.as_ref(), &name.inner);
+    if eval.is_err() {
+        return Err(eval.unwrap_err());
+    }
+    let eval = eval.unwrap();
+    let eval_type = eval.get_type(ctx).name();
+    if typ.is_some() && eval_type != typ.as_ref().unwrap().to_typeid().name() {
+        return Err(CompileError::with_notes(
+            value.span,
+            &format!(
+                "Expression evaluates to type `{}`, which is not expected.",
+                eval_type
+            ),
+            typ.as_ref().unwrap().span,
+            &format!(
+                "An expected type was specified here. Compilation will continue as if this was `{}`",
+                eval_type
+            ),
+        ));
+    }
+    let field = Field::new(eval, &name.inner);
+    ctx.add_field(&name.inner, field);
+    Ok(None)
+}
+
 pub fn gen_stmt<'ctx>(
     ctx: &mut LanguageContext<'ctx>,
     stmt: &Stmt,
@@ -307,36 +366,23 @@ pub fn gen_stmt<'ctx>(
 ) -> Result<Option<ValueEnum<'ctx>>, CompileError> {
     match stmt {
         Stmt::Error(_) => panic!(),
-        Stmt::VarDecl { name, typ, value } => {
-            let eval = gen_expr(ctx, value.as_ref(), &name.inner);
-            if eval.is_err() {
-                return Err(eval.unwrap_err());
-            }
-            let eval = eval.unwrap();
-            let eval_type = eval.get_type(ctx).name();
-            if typ.is_some() && eval_type != typ.as_ref().unwrap().to_typeid().name() {
+        Stmt::VarDecl { name, typ, value } => gen_var_decl(ctx, name, typ, value),
+        Stmt::VarSet { on, value } => {
+            let expr = gen_expr(ctx, value.as_ref(), "UNUSED_setas")?;
+            let field = gen_primary_ref(ctx, on, "UNUSED_setto")?;
+            if field.typ != expr.get_type(ctx) {
                 return Err(CompileError::with_notes(
                     value.span,
                     &format!(
-                        "Expression evaluates to type `{}`, which is not expected.",
-                        eval_type
+                        "Type of expression, `{}`, is different from the type of the field.",
+                        expr.get_type(ctx)
                     ),
-                    typ.as_ref().unwrap().span,
-                    &format!(
-                        "An expected type was specified here. Compilation will continue as if this was `{}`",
-                        eval_type
-                    ),
+                    on.span,
+                    &format!("The type of the field is `{}`", field.typ),
                 ));
-            }
-            let field = Field::new(eval, &name.inner);
-            ctx.add_field(&name.inner, field);
-            Ok(None)
-        }
-        Stmt::VarSet { name, value } => {
-            let expr = gen_expr(ctx, value.as_ref(), &name.inner)?;
-            let field = ctx.get_field(name.clone())?;
-            field.release(ctx);
-            ctx.get_field_mut(name.clone())?.value = expr;
+            };
+            ctx.builder.build_store(field.ptr, expr.get_value());
+
             Ok(None)
         }
         Stmt::Expr(expr) => match gen_expr(ctx, expr.as_ref(), "UNUSED") {
@@ -583,6 +629,7 @@ pub fn gen_decl_pre<'ctx>(
             params,
             decls,
         } => Ok(()),
+        Decl::Var { name, typ, value } => gen_var_decl(ctx, name, typ, value).map(|x| ()),
     }
 }
 
@@ -592,6 +639,7 @@ pub fn gen_decl<'ctx>(
     decl: &Decl,
 ) -> Result<(), CompileError> {
     match decl {
+        Decl::Var { name, typ, value } => Ok(()),
         Decl::Function {
             name,
             generics,
@@ -696,33 +744,39 @@ pub fn gen_decl<'ctx>(
             let mut members = BTreeMap::<String, ClassMember>::new();
             let mut functions = BTreeMap::<String, Function<'ctx>>::new();
             let mut functions_decls = BTreeMap::<String, (Function<'ctx>, &Decl)>::new();
+            let mut to_store = Vec::<(BasicValueEnum<'ctx>, u32, &String)>::new();
 
-            {
-                let scope = ctx.current_scope();
-                for ((name, field), decl) in scope.iter().zip(decls) {
-                    if let Some(function) = field.value.clone().try_as_function() {
-                        functions.insert(name.clone(), function.clone());
-                        functions_decls.insert(name.clone(), (function, decl));
-                    } // else {
-                    //     body.push(
-                    //         any_to_basic(ctx.get(field.value.get_type(ctx)).storage_type).unwrap(),
-                    //     );
-                    //     members[name] = ClassMember::new(field.value.get_type(ctx), member_index);
-                    //     member_index += 1;
-                    // }
-                }
-
-                if scope.len() == 0 {
-                    body.push(ctx.types.bool.into());
-                }
-            }
-
+            let mut member_index = 0;
             for ((name, typ), val) in params.iter().zip(init_llvm_fn.get_params()) {
                 body.push(val.get_type());
+                to_store.push((val, member_index, &name.inner));
                 ctx.add_field(
                     name,
                     Field::new(ValueEnum::from_val(ctx, val, typ.to_typeid(), name), name),
                 );
+                members.insert(
+                    name.inner.clone(),
+                    ClassMember::new(typ.to_typeid(), member_index),
+                );
+                member_index += 1;
+            }
+
+            let scope = ctx.current_scope();
+            for ((name, field), decl) in scope.iter().zip(decls) {
+                if let Some(function) = field.value.clone().try_as_function() {
+                    functions.insert(name.clone(), function.clone());
+                    functions_decls.insert(name.clone(), (function, decl));
+                } else {
+                    body.push(
+                        any_to_basic(ctx.get(field.value.get_type(ctx)).storage_type).unwrap(),
+                    );
+                    to_store.push((field.value.get_value(), member_index, name));
+                    members.insert(
+                        name.clone(),
+                        ClassMember::new(field.value.get_type(ctx), member_index),
+                    );
+                    member_index += 1;
+                }
             }
 
             class_struct.set_body(&body, false);
@@ -732,15 +786,10 @@ pub fn gen_decl<'ctx>(
                 .build_call_returns(malloc, &[class_struct.size_of().unwrap().into()], "out")
                 .into_pointer_value();
 
-            let mut member_index = 0;
-            for ((name, typ), val) in params.iter().zip(init_llvm_fn.get_params()) {
-                ctx.build_ptr_store(class_struct, mem, val, member_index, name);
-                members.insert(
-                    name.inner.clone(),
-                    ClassMember::new(typ.to_typeid(), member_index),
-                );
-                member_index += 1;
+            for (val, index, name) in to_store {
+                ctx.build_ptr_store(class_struct, mem, val, index, name);
             }
+            println!("{:?}", members);
 
             if functions.contains_key("init") {
                 let init_type = ctx.types.void.fn_type(&[ctx.types.ptr.into()], false);

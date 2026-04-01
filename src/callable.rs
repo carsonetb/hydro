@@ -13,7 +13,7 @@ use crate::{
     context::LanguageContext,
     types::{BasicBuiltin, Metatype, MetatypeBuilder, TypeID},
     unit::Unit,
-    value::{Copyable, Field, Value, ValueEnum, ValueStatic, any_to_basic},
+    value::{Copyable, Field, Value, ValueEnum, ValueRef, ValueStatic, any_to_basic},
 };
 
 pub trait Callable<'ctx> {
@@ -163,6 +163,18 @@ impl<'ctx> Value<'ctx> for Function<'ctx> {
         Err(CompileError::new(
             name.span,
             &format!("Function types have no members!"),
+        ))
+    }
+
+    fn member_ref(
+        &self,
+        ctx: &LanguageContext<'ctx>,
+        name: Spanned<String>,
+        into: &str,
+    ) -> Result<ValueRef<'ctx>, CompileError> {
+        Err(CompileError::new(
+            name.span,
+            "Cannot get this member as a reference.",
         ))
     }
 
@@ -342,6 +354,18 @@ impl<'ctx> Value<'ctx> for MemberFunction<'ctx> {
         Err(CompileError::new(
             name.span,
             &format!("Function types have no members!"),
+        ))
+    }
+
+    fn member_ref(
+        &self,
+        ctx: &LanguageContext<'ctx>,
+        name: Spanned<String>,
+        into: &str,
+    ) -> Result<ValueRef<'ctx>, CompileError> {
+        Err(CompileError::new(
+            name.span,
+            "Cannot get this member as a reference.",
         ))
     }
 

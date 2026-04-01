@@ -11,7 +11,7 @@ use crate::{
     codegen::CompileError,
     context::LanguageContext,
     types::{BasicBuiltin, MetatypeBuilder, TypeID},
-    value::{Copyable, Value, ValueEnum, ValueStatic},
+    value::{Copyable, Value, ValueEnum, ValueRef, ValueStatic},
 };
 
 #[derive(Clone, Debug)]
@@ -177,6 +177,18 @@ impl<'ctx> Value<'ctx> for Vector<'ctx> {
                 &format!("Type `{}` has no `{}` member.", self.metatype, name.inner),
             )),
         }
+    }
+
+    fn member_ref(
+        &self,
+        ctx: &LanguageContext<'ctx>,
+        name: Spanned<String>,
+        into: &str,
+    ) -> Result<ValueRef<'ctx>, CompileError> {
+        Err(CompileError::new(
+            name.span,
+            "Cannot get this member as a reference.",
+        ))
     }
 
     fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeID {

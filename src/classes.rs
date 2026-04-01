@@ -11,7 +11,7 @@ use crate::{
     codegen::CompileError,
     context::LanguageContext,
     types::TypeID,
-    value::{Copyable, Value, ValueEnum, ValueStatic},
+    value::{Copyable, Value, ValueEnum, ValueRef, ValueStatic},
 };
 
 #[derive(Debug, Clone)]
@@ -91,6 +91,35 @@ impl<'ctx> Value<'ctx> for Class<'ctx> {
             member.typ.clone(),
             into,
         ))
+    }
+
+    fn member_ref(
+        &self,
+        ctx: &LanguageContext<'ctx>,
+        name: Spanned<String>,
+        into: &str,
+    ) -> Result<ValueRef<'ctx>, CompileError> {
+        let info = self.info(ctx);
+        if info.functions.contains_key(&name.inner) {
+            return Err(CompileError::new(
+                name.span,
+                "Cannot set to a function field.",
+            ));
+        }
+        let member = info.members.get(&name.inner).ok_or_else(|| {
+            CompileError::new(
+                name.span,
+                &format!("Type `{}` has no member `{}`.", self.typ, name.inner),
+            )
+        })?;
+        let ptr = ctx
+            .builder
+            .build_struct_gep(info.class_struct, self.ptr, member.index, into)
+            .unwrap();
+        Ok(ValueRef {
+            ptr,
+            typ: member.typ.clone(),
+        })
     }
 
     fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeID {

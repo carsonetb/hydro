@@ -10,7 +10,7 @@ use crate::{
     codegen::CompileError,
     context::LanguageContext,
     types::{BasicBuiltin, MetatypeBuilder, TypeID},
-    value::{Copyable, Literal, Value, ValueEnum, ValueStatic},
+    value::{Copyable, Literal, Value, ValueEnum, ValueRef, ValueStatic},
 };
 
 #[derive(Clone, Debug)]
@@ -55,6 +55,18 @@ impl<'ctx> Value<'ctx> for Str<'ctx> {
         name: Spanned<String>,
         into: &str,
     ) -> Result<ValueEnum<'ctx>, CompileError> {
+        Err(CompileError::new(
+            name.span,
+            &format!("`String` has no member {}", name.inner),
+        ))
+    }
+
+    fn member_ref(
+        &self,
+        ctx: &LanguageContext<'ctx>,
+        name: Spanned<String>,
+        into: &str,
+    ) -> Result<ValueRef<'ctx>, CompileError> {
         Err(CompileError::new(
             name.span,
             &format!("`String` has no member {}", name.inner),

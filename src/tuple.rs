@@ -9,7 +9,7 @@ use crate::{
     codegen::CompileError,
     context::LanguageContext,
     types::{BasicBuiltin, MetatypeBuilder, TypeID},
-    value::{Copyable, Field, Value, ValueEnum, ValueStatic, any_to_basic},
+    value::{Copyable, Field, Value, ValueEnum, ValueRef, ValueStatic, any_to_basic},
 };
 
 #[derive(Clone, Debug)]
@@ -69,6 +69,15 @@ impl<'ctx> Value<'ctx> for Tuple<'ctx> {
             self.metatype.generics[as_int].clone(),
             into,
         ))
+    }
+
+    fn member_ref(
+        &self,
+        ctx: &LanguageContext<'ctx>,
+        name: Spanned<String>,
+        into: &str,
+    ) -> Result<ValueRef<'ctx>, CompileError> {
+        todo!()
     }
 
     fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeID {

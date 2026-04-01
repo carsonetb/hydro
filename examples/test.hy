@@ -1,4 +1,5 @@
 class Test(x: Int) {
+    var y = 2;
     fn cls_fn -> Int {
         return x;
     }
@@ -6,6 +7,8 @@ class Test(x: Int) {
 
 fn main {
     var x = Test(3);
+    x.y = x.y + 1;
+    print(x.y.to_string());
     print(x.cls_fn().to_string());
     var array = [1, 2, 3];
     if false {

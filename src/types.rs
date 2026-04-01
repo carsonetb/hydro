@@ -12,7 +12,7 @@ use crate::{
     classes::{ClassInfo, ClassMember},
     codegen::CompileError,
     context::LanguageContext,
-    value::{Field, Value, ValueEnum, ValueStatic, any_to_basic},
+    value::{Field, Value, ValueEnum, ValueRef, ValueStatic, any_to_basic},
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -133,6 +133,36 @@ impl<'ctx> Value<'ctx> for Metatype<'ctx> {
             member.typ.clone(),
             into,
         ))
+    }
+
+    fn member_ref(
+        &self,
+        ctx: &LanguageContext<'ctx>,
+        name: Spanned<String>,
+        into: &str,
+    ) -> Result<ValueRef<'ctx>, CompileError> {
+        let member = self.members.get(&name.inner).ok_or_else(|| {
+            CompileError::new(
+                name.span,
+                &format!(
+                    "Cannot get member of name {} from type {}",
+                    name.inner, self.id
+                ),
+            )
+        })?;
+        let member_ptr = ctx
+            .builder
+            .build_struct_gep(
+                self.static_struct,
+                self.static_ptr,
+                member.index,
+                format!("{into}_field").as_str(),
+            )
+            .unwrap();
+        Ok(ValueRef {
+            ptr: member_ptr,
+            typ: member.typ.clone(),
+        })
     }
 
     fn get_type(&self, _ctx: &LanguageContext<'ctx>) -> TypeID {

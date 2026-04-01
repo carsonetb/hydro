@@ -5,7 +5,7 @@ use crate::{
     codegen::CompileError,
     context::{LLVMTypes, LanguageContext},
     types::{BasicBuiltin, MetatypeBuilder, TypeID},
-    value::{Copyable, Literal, Value, ValueEnum, ValueStatic},
+    value::{Copyable, Literal, Value, ValueEnum, ValueRef, ValueStatic},
 };
 use chumsky::span::{SimpleSpan, Span, Spanned, WrappingSpan};
 use inkwell::{
@@ -132,6 +132,18 @@ impl<'ctx> Value<'ctx> for Int<'ctx> {
                 &format!("Type `Int` has no `{}` member.", name.inner),
             )),
         }
+    }
+
+    fn member_ref(
+        &self,
+        ctx: &LanguageContext<'ctx>,
+        name: Spanned<String>,
+        into: &str,
+    ) -> Result<ValueRef<'ctx>, CompileError> {
+        Err(CompileError::new(
+            name.span,
+            "Cannot get this member as a reference.",
+        ))
     }
 
     fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeID {
