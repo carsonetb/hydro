@@ -1,0 +1,10 @@
+class Rectangle {
+    x: Float;
+    y: Float;
+    width: Float;
+    height: Float;
+}
+
+fn init_window(width: Int, height: Int, title: String) = InitWindow;
+fn close_window() = CloseWindow;
+fn window_should_close() -> Bool = WindowShouldClose;

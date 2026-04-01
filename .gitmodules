@@ -4,3 +4,6 @@
 [submodule "src/clib/hashmap.c"]
 	path = src/clib/hashmap.c
 	url = https://github.com/tidwall/hashmap.c
+[submodule "examples/raylib"]
+	path = examples/raylib
+	url = https://github.com/raysan5/raylib

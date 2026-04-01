@@ -42,6 +42,7 @@ pub fn compile(ctx: &LanguageContext) {
             "bin/out",
             "-lc",
             "-lgc",
+            "-lm",
         ])
         .status()
         .unwrap();

@@ -1,0 +1,21 @@
+source 'https://github.com/raysan5/raylib'
+
+target Linux {
+    artifact 'src/libraylib.so.6.0.0'
+
+    run 'make PLATFORM=PLATFORM_DESKTOP RAYLIB_LIBTYPE=SHARED' in 'src'
+
+    linkdir 'src'
+    link 'raylib', 'm', 'GL', 'rt', 'X11'
+}
+
+target Windows {
+    artifact 'build/raylib.dll'
+
+    run 'mkdir build'
+    run 'cmake -DBUILD_SHARED_LIBS=ON ..' in 'build'
+    run 'cmake --build .' in 'build'
+
+    linkdir 'build'
+    link 'raylib', 'opengl32', 'gdi32', 'winmm'
+}
