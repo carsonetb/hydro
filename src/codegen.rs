@@ -21,6 +21,7 @@ use crate::{
     callable::{Callable, Function},
     classes::{Class, ClassInfo, ClassMember},
     context::LanguageContext,
+    ffi::compile_ffi,
     int::Int,
     parser::{Atom, Decl, Expr, ParseLiteral, ParserType, Primary, Program, Stmt},
     string::Str,
@@ -940,7 +941,8 @@ pub fn do_codegen<'ctx>(
         if path.with_extension("hy").exists() {
             // TODO: Importing other files
         } else if path.with_extension("hyi").exists() {
-            // TODO: Importing stubs
+            let stub = path.with_extension("hyi");
+            compile_ffi(ctx, &import.span.make_wrapped(stub), build);
 
             let buildscript = path.with_extension("hyb");
             if buildscript.exists() {

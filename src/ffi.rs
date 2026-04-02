@@ -1,4 +1,4 @@
-use std::{fs::File, io::Read, path::PathBuf};
+use std::{collections::BTreeMap, fs::File, io::Read, path::PathBuf};
 
 use ariadne::{Color, Label, Report, ReportKind, Source};
 use chumsky::{
@@ -10,15 +10,16 @@ use chumsky::{
     text::{ascii::ident, keyword},
 };
 use inkwell::{
-    types::{BasicMetadataTypeEnum, BasicType},
+    types::{AnyType, BasicMetadataTypeEnum, BasicType, BasicTypeEnum},
     values::{AnyValue, BasicMetadataValueEnum},
 };
 
 use crate::{
     callable::Function,
+    classes::{ClassInfo, ClassMember},
     codegen::CompileError,
     context::LanguageContext,
-    types::TypeID,
+    types::{BasicBuiltin, MetatypeBuilder, TypeID},
     value::{Field, ValueEnum, any_to_basic},
 };
 
@@ -104,6 +105,7 @@ fn ffi_member<'src>() -> impl Parser<'src, &'src str, FFIMember, extra::Err<Rich
 fn ffi_decl<'src>() -> impl Parser<'src, &'src str, FFIDecl, extra::Err<Rich<'src, char>>> {
     let id = ident().map(|i: &str| i.to_string()).spanned();
     let class = keyword("class")
+        .padded()
         .ignore_then(id)
         .then(
             ffi_member()
@@ -161,7 +163,40 @@ pub fn compile_ffi<'ctx>(
     let decls = ast.unwrap();
     for decl in decls {
         match decl {
-            FFIDecl::Class { name, members } => todo!(),
+            FFIDecl::Class { name, members } => {
+                let class_struct = ctx
+                    .context
+                    .opaque_struct_type(&format!("User__{}", name.inner));
+
+                let mut body = Vec::<BasicTypeEnum<'ctx>>::new();
+                let mut class_members = BTreeMap::<String, ClassMember>::new();
+                let mut index = 0;
+                for member in &members {
+                    match member {
+                        FFIMember::Var { name, typ } => {
+                            let typ = TypeID::from_base(&typ.inner);
+                            class_members
+                                .insert(name.inner.clone(), ClassMember::new(typ.clone(), index));
+                            body.push(ctx.get_storage(typ));
+                        }
+                        FFIMember::Function(foreign_function) => todo!(),
+                    };
+                    index += 1;
+                }
+                class_struct.set_body(&body, false);
+
+                let mut builder = MetatypeBuilder::new(
+                    ctx,
+                    BasicBuiltin::Class,
+                    TypeID::from_base(&name.inner),
+                    Some(class_struct),
+                    ctx.types.ptr.as_any_type_enum(),
+                    false,
+                );
+                let class_info = ClassInfo::new(class_struct, class_members, BTreeMap::new());
+                builder.add_class_info(class_info);
+                builder.build(ctx.context, ctx, vec![]);
+            }
             FFIDecl::Function(ForeignFunction {
                 name,
                 params,
