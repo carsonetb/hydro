@@ -51,21 +51,21 @@ fn main() -> Result<(), Box<dyn Error>> {
     let entry = llvm_ctx.append_basic_block(main_val, "entry");
     ctx.builder.position_at_end(entry);
 
-    do_codegen(&llvm_ctx, &mut ctx, path, program, &source, &build).unwrap();
+    let link_info = do_codegen(&llvm_ctx, &mut ctx, path, program, &source, &build).unwrap();
 
     ctx.builder.build_return(Some(&ctx.int(0))).unwrap();
 
     main_val.verify(true);
     //ctx.module.print_to_stderr();
     if ctx.module.verify().is_err() {
-        // ctx.module.print_to_stderr();
+        ctx.module.print_to_stderr();
         println!(
             "There was an error with the generated LLVM IR. It was printed above for debugging."
         );
         ctx.module.verify().unwrap();
     }
 
-    compile(&ctx);
+    compile(&ctx, link_info);
 
     Ok(())
 }

@@ -16,13 +16,29 @@ use chumsky::{
     span::{Spanned, WrappingSpan},
     text::{ident, keyword, newline},
 };
-use git2::Repository;
 
 use crate::{codegen::CompileError, context::LanguageContext};
 
+#[derive(Debug, Clone)]
 pub struct LinkInfo {
     pub linkdirs: Vec<PathBuf>,
     pub links: Vec<String>,
+}
+
+impl LinkInfo {
+    pub fn empty() -> LinkInfo {
+        return LinkInfo {
+            linkdirs: vec![],
+            links: vec![],
+        };
+    }
+
+    pub fn merge(&self, other: LinkInfo) -> LinkInfo {
+        Self {
+            linkdirs: [self.linkdirs.as_slice(), other.linkdirs.as_slice()].concat(),
+            links: [self.links.as_slice(), other.links.as_slice()].concat(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -176,7 +192,6 @@ pub fn run_buildscript(path: &Spanned<PathBuf>, build: &PathBuf) -> Result<LinkI
             .status()
             .unwrap();
     }
-    let repo = Repository::open(&clone_dir).unwrap();
 
     let mut targets = HashMap::<String, Target>::new();
     for target in ast.targets {

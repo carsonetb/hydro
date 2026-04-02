@@ -6,7 +6,7 @@ use std::{
 
 use inkwell::{execution_engine::JitFunction, targets::FileType};
 
-use crate::context::LanguageContext;
+use crate::{buildscript::LinkInfo, context::LanguageContext};
 
 pub fn execute_jit(ctx: &LanguageContext) -> i32 {
     let execution_engine = ctx
@@ -21,7 +21,7 @@ pub fn execute_jit(ctx: &LanguageContext) -> i32 {
     }
 }
 
-pub fn compile(ctx: &LanguageContext) {
+pub fn compile(ctx: &LanguageContext, link_info: LinkInfo) {
     if !exists("bin").unwrap() {
         create_dir("bin").unwrap();
     }
@@ -33,18 +33,28 @@ pub fn compile(ctx: &LanguageContext) {
         .unwrap();
     file.write_all(buffer.as_slice()).unwrap();
 
-    Command::new("clang")
-        .args([
-            "bin/out.o",
-            "src/clib/runtime.c",
-            "-no-pie",
-            "-o",
-            "bin/out",
-            "-lc",
-            "-lgc",
-            "-lm",
-        ])
-        .status()
-        .unwrap();
+    let mut compile = Command::new("clang");
+    compile.args([
+        "bin/out.o",
+        "src/clib/runtime.c",
+        "-no-pie",
+        "-o",
+        "bin/out",
+        "-lc",
+        "-lgc",
+    ]);
+
+    for linkdir in link_info.linkdirs {
+        compile.arg(format!("-L{}", linkdir.to_str().unwrap()));
+    }
+
+    for link in link_info.links {
+        compile.arg(format!("-l{}", link));
+    }
+
+    println!("Linking with {:?}", compile);
+
+    compile.status().unwrap();
+
     Command::new("./bin/out").status().unwrap();
 }

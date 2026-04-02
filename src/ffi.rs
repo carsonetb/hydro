@@ -228,13 +228,20 @@ pub fn compile_ffi<'ctx>(
                 );
                 let function_type = TypeID::new(
                     "Function",
-                    vec![TypeID::new(
-                        "Tuple",
-                        params
-                            .iter()
-                            .map(|(_, typ)| TypeID::from_base(typ))
-                            .collect(),
-                    )],
+                    vec![
+                        TypeID::new(
+                            "Tuple",
+                            params
+                                .iter()
+                                .map(|(_, typ)| TypeID::from_base(typ))
+                                .collect(),
+                        ),
+                        if returns.is_some() {
+                            TypeID::from_base(&returns.clone().unwrap())
+                        } else {
+                            TypeID::from_base("Unit")
+                        },
+                    ],
                 );
                 let function =
                     Function::from_function(ctx.context, ctx, llvm_function, function_type);
@@ -247,8 +254,16 @@ pub fn compile_ffi<'ctx>(
                 let old_block = ctx.begin_function(llvm_function);
                 let mut param_vals: Vec<BasicMetadataValueEnum> = vec![];
                 for ((name, typ), val) in params.iter().zip(llvm_function.get_params()) {
-                    // TODO: Map String type to char*
-                    param_vals.push(val.into());
+                    if typ.inner == "String" {
+                        let val = ctx.build_call_returns(
+                            ctx.module.get_function("String__to_cstr").unwrap(),
+                            &[val.into()],
+                            "to_cstr",
+                        );
+                        param_vals.push(val.into());
+                    } else {
+                        param_vals.push(val.into());
+                    }
                 }
                 let ret = ctx
                     .builder
@@ -261,6 +276,8 @@ pub fn compile_ffi<'ctx>(
                 } else {
                     ctx.builder.build_return(None);
                 }
+
+                ctx.builder.position_at_end(old_block);
             }
         }
     }

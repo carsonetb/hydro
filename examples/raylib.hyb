@@ -9,6 +9,15 @@ target linux {
     link 'raylib', 'm', 'GL', 'rt', 'X11'
 }
 
+target macos {
+    artifact 'src/libraylib.6.0.0.dylib'
+
+    run 'make PLATFORM=PLATFORM_DESKTOP RAYLIB_LIBTYPE=SHARED' in 'src'
+
+    linkdir 'src'
+    link 'raylib', 'm', 'GL', 'rt', 'X11'
+}
+
 target windows {
     artifact 'build/raylib.dll'
 

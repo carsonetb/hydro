@@ -8,6 +8,7 @@ class Test(x: Int) {
 }
 
 fn main {
+    init_window(500, 500, "Test");
     var x = Test(3);
     x.y = x.y + 1;
     print(x.y.to_string());

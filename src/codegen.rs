@@ -17,7 +17,7 @@ use inkwell::{
 
 use crate::{
     bool::Bool,
-    buildscript::run_buildscript,
+    buildscript::{LinkInfo, run_buildscript},
     callable::{Callable, Function},
     classes::{Class, ClassInfo, ClassMember},
     context::LanguageContext,
@@ -788,7 +788,6 @@ pub fn gen_decl<'ctx>(
             for (val, index, name) in to_store {
                 ctx.build_ptr_store(class_struct, mem, val, index, name);
             }
-            println!("{:?}", members);
 
             if functions.contains_key("init") {
                 let init_type = ctx.types.void.fn_type(&[ctx.types.ptr.into()], false);
@@ -921,7 +920,7 @@ pub fn do_codegen<'ctx>(
     program: Program,
     source: &PathBuf,
     build: &PathBuf,
-) -> Result<(), ()> {
+) -> Result<LinkInfo, ()> {
     let filename = path
         .clone()
         .file_name()
@@ -932,6 +931,11 @@ pub fn do_codegen<'ctx>(
     let mut src = "".to_string();
     file.read_to_string(&mut src).unwrap();
 
+    ctx.push_scope();
+
+    ctx.init_metatypes(&llvm_ctx);
+
+    let mut link_info = LinkInfo::empty();
     for import in program.imports {
         let mut path = source.clone();
         for name in import.inner.path {
@@ -946,7 +950,12 @@ pub fn do_codegen<'ctx>(
 
             let buildscript = path.with_extension("hyb");
             if buildscript.exists() {
-                run_buildscript(&import.span.make_wrapped(buildscript), build);
+                let maybe_info = run_buildscript(&import.span.make_wrapped(buildscript), build);
+                if maybe_info.is_err() {
+                    ctx.error(maybe_info.clone().err().unwrap());
+                    continue;
+                }
+                link_info = link_info.merge(maybe_info.unwrap());
             }
         } else {
             ctx.error(CompileError::new(
@@ -958,10 +967,6 @@ pub fn do_codegen<'ctx>(
             ));
         };
     }
-
-    ctx.push_scope();
-
-    ctx.init_metatypes(&llvm_ctx);
 
     gen_decls_pre(ctx, &program.decls, None);
     gen_decls(ctx, &program.decls);
@@ -1008,6 +1013,6 @@ pub fn do_codegen<'ctx>(
     if ctx.errors.len() > 0 {
         Err(())
     } else {
-        Ok(())
+        Ok(link_info)
     }
 }
