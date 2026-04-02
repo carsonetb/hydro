@@ -7,6 +7,7 @@ mod classes;
 mod codegen;
 mod compile;
 mod context;
+mod ffi;
 mod int;
 mod parser;
 mod string;
@@ -32,6 +33,8 @@ use crate::{
 
 fn main() -> Result<(), Box<dyn Error>> {
     let path = Path::new("examples/test.hy").to_path_buf();
+    let source = Path::new("examples").to_path_buf();
+    let build = Path::new("bin").to_path_buf();
     let program = match parse(path.clone()) {
         Some(program) => program,
         None => exit(0),
@@ -48,7 +51,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let entry = llvm_ctx.append_basic_block(main_val, "entry");
     ctx.builder.position_at_end(entry);
 
-    do_codegen(&llvm_ctx, &mut ctx, path, program).unwrap();
+    do_codegen(&llvm_ctx, &mut ctx, path, program, &source, &build).unwrap();
 
     ctx.builder.build_return(Some(&ctx.int(0))).unwrap();
 

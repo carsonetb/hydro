@@ -1,3 +1,5 @@
+import raylib;
+
 class Test(x: Int) {
     var y = 2;
     fn cls_fn -> Int {

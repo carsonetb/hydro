@@ -35,6 +35,8 @@ String *String__copy(String *from) {
   return out;
 }
 
+const char *String__to_cstr(String *from) { return from->val; }
+
 Vector *Vector__new(size_t type_size, size_t capacity) {
   Vector *out = GC_MALLOC(sizeof(Vector));
   void *data = GC_MALLOC(type_size * capacity);

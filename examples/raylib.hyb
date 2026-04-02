@@ -1,6 +1,6 @@
 source 'https://github.com/raysan5/raylib'
 
-target Linux {
+target linux {
     artifact 'src/libraylib.so.6.0.0'
 
     run 'make PLATFORM=PLATFORM_DESKTOP RAYLIB_LIBTYPE=SHARED' in 'src'
@@ -9,7 +9,7 @@ target Linux {
     link 'raylib', 'm', 'GL', 'rt', 'X11'
 }
 
-target Windows {
+target windows {
     artifact 'build/raylib.dll'
 
     run 'mkdir build'

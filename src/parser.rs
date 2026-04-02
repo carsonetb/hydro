@@ -22,7 +22,13 @@ pub enum ErrorKind {
 
 #[derive(Debug)]
 pub struct Program {
+    pub imports: Vec<Spanned<Import>>,
     pub decls: Vec<Decl>,
+}
+
+#[derive(Debug)]
+pub struct Import {
+    pub path: Vec<Spanned<String>>,
 }
 
 #[derive(Debug)]
@@ -586,12 +592,29 @@ pub fn decl<'src>() -> impl Parser<'src, &'src str, Decl, extra::Err<Rich<'src, 
     })
 }
 
+pub fn import<'src>() -> impl Parser<'src, &'src str, Spanned<Import>, extra::Err<Rich<'src, char>>>
+{
+    keyword("import")
+        .padded()
+        .ignore_then(
+            ident()
+                .map(|s: &str| s.to_string())
+                .spanned()
+                .separated_by(just('.').padded())
+                .collect(),
+        )
+        .then_ignore(just(';').padded())
+        .map(|path| Import { path })
+        .spanned()
+}
+
 pub fn program<'src>() -> impl Parser<'src, &'src str, Program, extra::Err<Rich<'src, char>>> {
-    decl()
+    import()
         .repeated()
-        .collect::<Vec<_>>()
+        .collect()
+        .then(decl().repeated().collect())
         .then_ignore(end().padded())
-        .map(|decls| Program { decls })
+        .map(|(imports, decls)| Program { imports, decls })
 }
 
 pub fn parse<'src>(path: PathBuf) -> Option<Program> {

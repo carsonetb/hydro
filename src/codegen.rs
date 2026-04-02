@@ -17,6 +17,7 @@ use inkwell::{
 
 use crate::{
     bool::Bool,
+    buildscript::run_buildscript,
     callable::{Callable, Function},
     classes::{Class, ClassInfo, ClassMember},
     context::LanguageContext,
@@ -920,6 +921,8 @@ pub fn do_codegen<'ctx>(
     ctx: &mut LanguageContext<'ctx>,
     path: PathBuf,
     program: Program,
+    source: &PathBuf,
+    build: &PathBuf,
 ) -> Result<(), ()> {
     let filename = path
         .clone()
@@ -930,6 +933,32 @@ pub fn do_codegen<'ctx>(
     let mut file = File::open(path).expect("Cannot read path!");
     let mut src = "".to_string();
     file.read_to_string(&mut src).unwrap();
+
+    for import in program.imports {
+        let mut path = source.clone();
+        for name in import.inner.path {
+            path = path.join(name.inner);
+        }
+
+        if path.with_extension("hy").exists() {
+            // TODO: Importing other files
+        } else if path.with_extension("hyi").exists() {
+            // TODO: Importing stubs
+
+            let buildscript = path.with_extension("hyb");
+            if buildscript.exists() {
+                run_buildscript(ctx, &import.span.make_wrapped(buildscript), build);
+            }
+        } else {
+            ctx.error(CompileError::new(
+                import.span,
+                &format!(
+                    "The path {} could not be found, so it could not be imported.",
+                    path.to_str().unwrap()
+                ),
+            ));
+        };
+    }
 
     ctx.push_scope();
 
