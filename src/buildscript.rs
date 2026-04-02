@@ -127,11 +127,7 @@ fn check_paths_exist(paths: &Vec<PathBuf>) -> bool {
     all_exists
 }
 
-pub fn run_buildscript<'ctx>(
-    ctx: &mut LanguageContext<'ctx>,
-    path: &Spanned<PathBuf>,
-    build: &PathBuf,
-) -> Result<LinkInfo, CompileError> {
+pub fn run_buildscript(path: &Spanned<PathBuf>, build: &PathBuf) -> Result<LinkInfo, CompileError> {
     let filename = path
         .clone()
         .file_name()
@@ -149,7 +145,7 @@ pub fn run_buildscript<'ctx>(
                 ReportKind::Error,
                 (filename.clone(), err.span().into_range()),
             )
-            .with_message("Syntax Error")
+            .with_message("Buildscript Syntax Error")
             .with_label(
                 Label::new((filename.clone(), err.span().into_range()))
                     .with_message(err.reason().to_string())

@@ -618,10 +618,7 @@ pub fn gen_decl_pre<'ctx>(
             let function_type =
                 TypeID::new("Function", vec![params_typeid, returns_typeid.clone()]);
             let function = Function::from_function(llvm_ctx, ctx, llvm_function, function_type);
-            ctx.add_field(
-                &name.inner,
-                Field::new(ValueEnum::Function(function), &name.inner),
-            );
+            ctx.add_field(&name, Field::new(ValueEnum::Function(function), &name));
 
             Ok(())
         }
@@ -947,7 +944,7 @@ pub fn do_codegen<'ctx>(
 
             let buildscript = path.with_extension("hyb");
             if buildscript.exists() {
-                run_buildscript(ctx, &import.span.make_wrapped(buildscript), build);
+                run_buildscript(&import.span.make_wrapped(buildscript), build);
             }
         } else {
             ctx.error(CompileError::new(
