@@ -9,7 +9,10 @@ use chumsky::{
     span::{Spanned, WrappingSpan},
     text::{ascii::ident, keyword},
 };
-use inkwell::types::{BasicMetadataTypeEnum, BasicType};
+use inkwell::{
+    types::{BasicMetadataTypeEnum, BasicType},
+    values::{AnyValue, BasicMetadataValueEnum},
+};
 
 use crate::{
     callable::Function,
@@ -165,7 +168,6 @@ pub fn compile_ffi<'ctx>(
                 returns,
                 bound,
             }) => {
-                // TODO: Map String type to char*
                 let mut param_types = Vec::<BasicMetadataTypeEnum>::new();
                 for (_, typ) in &params {
                     param_types.push(
@@ -176,7 +178,7 @@ pub fn compile_ffi<'ctx>(
                 }
                 let llvm_function_type = if returns.is_some() {
                     any_to_basic(
-                        ctx.get(TypeID::from_base(&returns.unwrap().inner))
+                        ctx.get(TypeID::from_base(&returns.clone().unwrap().inner))
                             .storage_type,
                     )
                     .unwrap()
@@ -185,7 +187,7 @@ pub fn compile_ffi<'ctx>(
                     ctx.types.void.fn_type(&param_types, false)
                 };
                 let llvm_function = ctx.module.add_function(
-                    &&format!("User__{}", name.inner),
+                    &format!("User__{}", name.inner),
                     llvm_function_type,
                     None,
                 );
@@ -202,6 +204,28 @@ pub fn compile_ffi<'ctx>(
                 let function =
                     Function::from_function(ctx.context, ctx, llvm_function, function_type);
                 ctx.add_field(&name, Field::new(ValueEnum::Function(function), &name));
+
+                let linked_function =
+                    ctx.module
+                        .add_function(&bound.inner, llvm_function_type, None);
+
+                let old_block = ctx.begin_function(llvm_function);
+                let mut param_vals: Vec<BasicMetadataValueEnum> = vec![];
+                for ((name, typ), val) in params.iter().zip(llvm_function.get_params()) {
+                    // TODO: Map String type to char*
+                    param_vals.push(val.into());
+                }
+                let ret = ctx
+                    .builder
+                    .build_call(linked_function, &param_vals, "ret")
+                    .unwrap();
+                ret.set_tail_call(true);
+                if returns.is_some() {
+                    ctx.builder
+                        .build_return(Some(&ret.try_as_basic_value().unwrap_basic()));
+                } else {
+                    ctx.builder.build_return(None);
+                }
             }
         }
     }
