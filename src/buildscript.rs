@@ -257,6 +257,13 @@ pub fn run_buildscript(path: &Spanned<PathBuf>, build: &PathBuf) -> Result<LinkI
         ));
     }
 
+    // for artifact in artifacts {
+    //     Command::new("cp")
+    //         .args([artifact.to_str().unwrap(), "bin"])
+    //         .status()
+    //         .unwrap();
+    // }
+
     println!("Finished running buildscript.");
 
     Ok(LinkInfo { linkdirs, links })
