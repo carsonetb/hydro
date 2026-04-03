@@ -27,6 +27,7 @@ use crate::{
     bool::Bool,
     callable::{Function, MemberFunction},
     codegen::CompileError,
+    float::Float,
     int::Int,
     string::Str,
     tuple::Tuple,
@@ -116,6 +117,7 @@ impl<'ctx> LanguageContext<'ctx> {
         Unit::build_metatype(context, self, vec![]);
         Bool::build_metatype(context, self, vec![]);
         Int::build_metatype(context, self, vec![]);
+        Float::build_metatype(context, self, vec![]);
         Metatype::build_metatype(context, self, vec![]);
     }
 

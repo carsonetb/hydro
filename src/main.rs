@@ -8,6 +8,7 @@ mod codegen;
 mod compile;
 mod context;
 mod ffi;
+mod float;
 mod int;
 mod parser;
 mod string;

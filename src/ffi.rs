@@ -1,6 +1,12 @@
-use std::{collections::BTreeMap, fs::File, io::Read, path::PathBuf};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fs::File,
+    io::Read,
+    path::PathBuf,
+};
 
 use ariadne::{Color, Label, Report, ReportKind, Source};
+use askama::Template;
 use chumsky::{
     IterParser, Parser,
     error::Rich,
@@ -23,9 +29,15 @@ use crate::{
     value::{Field, ValueEnum, any_to_basic},
 };
 
+struct FFIArg {
+    name: Spanned<String>,
+    typ: Spanned<String>,
+    raw: bool,
+}
+
 struct ForeignFunction {
     name: Spanned<String>,
-    params: Vec<(Spanned<String>, Spanned<String>)>,
+    params: Vec<FFIArg>,
     returns: Option<Spanned<String>>,
     bound: Spanned<String>,
 }
@@ -44,6 +56,44 @@ enum FFIDecl {
         members: Vec<FFIMember>,
     },
     Function(ForeignFunction),
+}
+
+struct ClassFieldTemplate {
+    c_type: String,
+    name: String,
+}
+
+struct ClassDefTemplate {
+    name: String,
+    fields: Vec<ClassFieldTemplate>,
+}
+
+struct FuncArgTemplate {
+    name: String,
+    c_type: String,
+    fat_string: bool,
+}
+
+struct FuncDefTemplate {
+    c_target: String,
+    args: Vec<FuncArgTemplate>,
+    returns: String,
+}
+
+#[derive(Template)]
+#[template(path = "bridge.c.template", escape = "none")]
+struct BridgeTemplate {
+    classes: Vec<ClassDefTemplate>,
+    funcs: Vec<FuncDefTemplate>,
+}
+
+impl BridgeTemplate {
+    fn new() -> BridgeTemplate {
+        BridgeTemplate {
+            classes: vec![],
+            funcs: vec![],
+        }
+    }
 }
 
 fn foreign_function<'src>()
@@ -122,6 +172,20 @@ fn program<'src>() -> impl Parser<'src, &'src str, Vec<FFIDecl>, extra::Err<Rich
     ffi_decl().repeated().collect()
 }
 
+fn map_to_ctype(typ: String) -> String {
+    let type_map = HashMap::from([
+        ("Int", "int"),
+        ("Float", "float"),
+        ("Bool", "char"),
+        ("String", "String*"),
+    ]);
+    if type_map.contains_key(&typ.as_str()) {
+        type_map.get(&typ.as_str()).unwrap().to_string()
+    } else {
+        format!("{}*", typ)
+    }
+}
+
 pub fn compile_ffi<'ctx>(
     ctx: &mut LanguageContext<'ctx>,
     path: &Spanned<PathBuf>,
@@ -161,6 +225,51 @@ pub fn compile_ffi<'ctx>(
     };
 
     let decls = ast.unwrap();
+
+    let mut bridge = BridgeTemplate::new();
+    for decl in decls {
+        match decl {
+            FFIDecl::Class { name, members } => {
+                bridge.classes.push(ClassDefTemplate {
+                    name: name.inner,
+                    fields: members
+                        .iter()
+                        .map(|member| match member {
+                            FFIMember::Var { name, typ } => ClassFieldTemplate {
+                                c_type: map_to_ctype(typ.inner),
+                                name: name.inner,
+                            },
+                            FFIMember::Function(foreign_function) => todo!(),
+                        })
+                        .collect(),
+                });
+            }
+            FFIDecl::Function(ForeignFunction {
+                name,
+                params,
+                returns,
+                bound,
+            }) => {
+                bridge.funcs.push(FuncDefTemplate {
+                    c_target: bound.inner,
+                    args: params
+                        .iter()
+                        .map(|FFIArg { name, typ, raw }| FuncArgTemplate {
+                            name: name.inner,
+                            c_type: map_to_ctype(typ.inner),
+                            fat_string: typ.inner == "String",
+                        })
+                        .collect(),
+                    returns: if returns.is_some() {
+                        map_to_ctype(returns.unwrap().inner)
+                    } else {
+                        "void".to_string()
+                    },
+                });
+            }
+        }
+    }
+
     for decl in decls {
         match decl {
             FFIDecl::Class { name, members } => {

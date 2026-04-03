@@ -22,6 +22,7 @@ use crate::{
     classes::{Class, ClassInfo, ClassMember},
     context::LanguageContext,
     ffi::compile_ffi,
+    float::Float,
     int::Int,
     parser::{Atom, Decl, Expr, ParseLiteral, ParserType, Primary, Program, Stmt},
     string::Str,
@@ -67,6 +68,7 @@ pub fn gen_literal<'ctx>(
     match literal {
         ParseLiteral::Error(_) => panic!(),
         ParseLiteral::Int(int) => ValueEnum::Int(Int::from_literal(ctx, *int, name)),
+        ParseLiteral::Float(float) => ValueEnum::Float(Float::from_literal(ctx, *float, name)),
         ParseLiteral::Bool(bool) => ValueEnum::Bool(Bool::from_literal(ctx, *bool, name)),
         ParseLiteral::String(str) => ValueEnum::String(Str::from_literal(ctx, str.clone(), name)),
     }

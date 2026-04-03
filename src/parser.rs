@@ -120,6 +120,7 @@ pub enum Atom {
 pub enum ParseLiteral {
     Error(ErrorKind),
     Int(u32),
+    Float(f32),
     Bool(bool),
     String(String),
 }
@@ -216,6 +217,14 @@ pub fn literal<'src>() -> impl GenericParser<'src, Spanned<ParseLiteral>> {
         })
         .spanned()
         .labelled("number");
+    let float = text::int(10)
+        .then(just('.').padded().ignore_then(text::int(10)))
+        .map(|(int, frac)| match format!("{}.{}", int, frac).parse() {
+            Ok(float) => ParseLiteral::Float(float),
+            Err(_) => ParseLiteral::Error(ErrorKind::Unknown),
+        })
+        .spanned()
+        .labelled("number");
     let bool = just("true")
         .map(|_| ParseLiteral::Bool(true))
         .or(just("false").map(|_| ParseLiteral::Bool(false)))
@@ -228,7 +237,7 @@ pub fn literal<'src>() -> impl GenericParser<'src, Spanned<ParseLiteral>> {
         .padded_by(just('"'))
         .map(|string: &str| ParseLiteral::String(string.to_string()))
         .spanned();
-    choice((int, bool, string)).padded()
+    choice((float, int, bool, string)).padded()
 }
 
 pub fn atom<'src>(

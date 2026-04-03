@@ -21,6 +21,7 @@ pub enum BasicBuiltin {
     Type,
     Bool,
     Int,
+    Float,
     String,
     Tuple,
     Vector,

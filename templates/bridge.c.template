@@ -1,0 +1,29 @@
+#include <builtin.c>
+
+{% for class in classes %}
+typedef struct {
+{%- for field in class.fields %}
+    {{ field.c_type }} {{field.name }};
+{%- endfor %}
+} {{ class.name }};
+{% endfor %}
+
+{% for func in funcs %}
+{ Bridge_{{ func.c_target }}(
+    {%- for arg in func.args -%}
+        {{ arg.c_type }} {{ arg.name }}
+        {%- if !loop.last %}, {% endif -%}
+    {%- endfor -%}
+) {
+    {{ func.c_target }}(
+        {%- for arg in func.args -%}
+            {%- if arg.fat_string -%}
+                {{ arg.name }}->val
+            {%- else -%}
+                {{ arg.name }}
+            {%- endif -%}
+            {%- if !loop.last %}, {% endif -%}
+        {%- endfor -%}
+    );
+}
+{% endfor %}
