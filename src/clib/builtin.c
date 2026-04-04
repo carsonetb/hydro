@@ -17,6 +17,13 @@ typedef struct {
 
 void print(String *val) { fprintf(stderr, "%s\n", val->val); }
 
+String *String__from_cstr_nosize(const char *from) {
+  String *out = GC_MALLOC(sizeof(String));
+  out->size = strlen(from);
+  out->val = from;
+  return out;
+}
+
 String *String__from_cstr(const char *from, int size) {
   String *out = GC_MALLOC(sizeof(String));
   out->size = size;

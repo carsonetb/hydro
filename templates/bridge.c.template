@@ -1,4 +1,13 @@
-#include <builtin.c>
+#include <string.h>
+
+typedef struct {
+  int size;
+  const char *val;
+} String;
+
+extern String *String__from_cstr_nosize(const char* from);
+
+extern void *GC_malloc(size_t);
 
 {% for class in classes %}
 typedef struct {
@@ -6,16 +15,32 @@ typedef struct {
     {{ field.c_type }} {{field.name }};
 {%- endfor %}
 } {{ class.name }};
+
+{{ class.name }}* {{ class.name }}__to_pointer({{ class.name }} value) {
+    {{ class.name }}* out = GC_malloc(sizeof({{ class.name }}));
+    memcpy(out, &value, sizeof({{ class.name }}));
+    return out;
+}
 {% endfor %}
 
 {% for func in funcs %}
-{ Bridge_{{ func.c_target }}(
+extern {{ func.bound_returns }} {{ func.c_target }}(
+    {%- for arg in func.args -%}
+        {{ arg.bound_type }} {{ arg.name }}
+        {%- if !loop.last %}, {% endif -%}
+    {%- endfor -%}
+);
+{% endfor %}
+
+{% for func in funcs %}
+{{ func.returns }} Bridge__{{ func.c_target }}(
     {%- for arg in func.args -%}
         {{ arg.c_type }} {{ arg.name }}
         {%- if !loop.last %}, {% endif -%}
     {%- endfor -%}
 ) {
-    {{ func.c_target }}(
+    {%- if func.returns != "void" %}
+    return {% endif -%} {%- if func.toptr %} {{ func.ret_struct }}__to_pointer({% endif -%} {%- if func.retstr %} String__from_cstr_nosize( {%endif -%} {{ func.c_target }}(
         {%- for arg in func.args -%}
             {%- if arg.fat_string -%}
                 {{ arg.name }}->val
@@ -24,6 +49,6 @@ typedef struct {
             {%- endif -%}
             {%- if !loop.last %}, {% endif -%}
         {%- endfor -%}
-    );
+    ){%- if func.retstr %}) {%endif -%} {%- if func.toptr %}){% endif -%};
 }
 {% endfor %}

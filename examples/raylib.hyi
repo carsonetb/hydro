@@ -31,6 +31,35 @@ class Texture {
     format: Int;
 }
 
+class Image {
+    data: ptr;
+    width: Int;
+    height: Int;
+    mipmaps: Int;
+    format: Int;
+}
+
+class GlyphInfo {
+    value: Int;
+    offset_x: Int;
+    offset_y: Int;
+    advance_x: Int;
+    image: raw Image;
+}
+
+class GUIStyleProp {
+    control_id: Int;
+    property_id: Int;
+    property_value: Int;
+}
+
+class Camera2D {
+    offset: raw Vector2;
+    target: raw Vector2;
+    rotation: Float;
+    zoom: Float;
+}
+
 fn init_window(width: Int, height: Int, title: String) = InitWindow;
 fn close_window = CloseWindow;
 fn window_should_close -> Bool = WindowShouldClose;
@@ -63,11 +92,14 @@ fn get_render_width -> Int = GetRenderWidth;
 fn get_render_height -> Int = GetRenderHeight;
 fn get_monitor_count -> Int = GetMonitorCount;
 fn get_current_monitor -> Int = GetCurrentMonitor;
+fn get_monitor_position(monitor: Int) -> raw Vector2 = GetMonitorPosition;
 fn get_monitor_width(monitor: Int) -> Int = GetMonitorWidth;
 fn get_monitor_height(monitor: Int) -> Int = GetMonitorHeight;
 fn get_monitor_physical_width(monitor: Int) -> Int = GetMonitorPhysicalWidth;
 fn get_monitor_physical_height(monitor: Int) -> Int = GetMonitorPhysicalHeight;
 fn get_monitor_refresh_rate(monitor: Int) -> Int = GetMonitorRefreshRate;
+fn get_window_position -> raw Vector2 = GetWindowPosition;
+fn get_window_scale_dpi -> raw Vector2 = GetWindowScaleDPI;
 fn get_monitor_name(monitor: Int) -> String = GetMonitorName;
 fn set_clipboard_text(text: String) = SetClipboardText;
 fn get_clipboard_text -> String = GetClipboardText;
@@ -80,3 +112,12 @@ fn is_cursor_hidden -> Bool = IsCursorHidden;
 fn enable_cursor = EnableCursor;
 fn disable_cursor = DisableCursor;
 fn is_cursor_on_screen -> Bool = IsCursorOnScreen;
+
+fn clear_background(color: raw Color) = ClearBackground;
+fn begin_drawing = BeginDrawing;
+fn end_drawing = EndDrawing;
+fn begin_mode_2d(camera: raw Camera2D) = BeginMode2D;
+fn end_mode_2d = EndMode2D;
+
+
+fn get_shapes_texture_rectangle -> Rectangle = GetShapesTextureRectangle;
