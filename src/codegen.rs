@@ -24,7 +24,10 @@ use crate::{
     ffi::compile_ffi,
     float::Float,
     int::Int,
-    parser::{Atom, Decl, Expr, ParseLiteral, ParserType, Primary, Program, Stmt},
+    parser::{
+        Atom, Decl, Expr, For, If, ParseLiteral, ParserType, Primary, Program, Return, Set, Stmt,
+        Var, While,
+    },
     string::Str,
     types::{BasicBuiltin, Metatype, MetatypeBuilder, TypeID},
     unit::Unit,
@@ -108,6 +111,8 @@ pub fn gen_atom<'ctx>(
             }
             Ok(ValueEnum::Vector(vec))
         }
+        Atom::Block(spanneds) => todo!(),
+        Atom::Tuple(spanned) => todo!(),
     }
 }
 
@@ -238,6 +243,13 @@ pub fn gen_expr<'ctx>(
                 .map_err(|err| CompileError::new(op.span, &err)))?
         }
         Expr::Primary(primary) => gen_primary(ctx, primary, &into_name),
+        Expr::Var(var) => todo!(),
+        Expr::Set(set) => todo!(),
+        Expr::If(_) => todo!(),
+        Expr::For(_) => todo!(),
+        Expr::Match(_) => todo!(),
+        Expr::While(_) => todo!(),
+        Expr::Combo(exprs) => todo!(),
     }
 }
 
@@ -249,12 +261,13 @@ pub fn gen_if<'ctx>(
     returns_spanned: Option<ParserType>,
 ) -> Result<Option<ValueEnum<'ctx>>, CompileError> {
     match stmt {
-        Stmt::If {
+        Stmt::If(If {
             condition,
             then,
             elifs,
             else_block,
-        } => {
+            name,
+        }) => {
             let truthy_block = ctx.context.append_basic_block(function, "truthy");
             let falsey_block = ctx.context.append_basic_block(function, "falsey");
             let continued_block = ctx.context.append_basic_block(function, "continue");
@@ -286,15 +299,16 @@ pub fn gen_if<'ctx>(
             let mut elifs = elifs.clone();
 
             if elifs.len() > 0 {
-                let (cond, then) = elifs.remove(0);
+                let (name, cond, then) = elifs.remove(0);
                 let elif_returns = gen_if(
                     ctx,
-                    &Stmt::If {
+                    &Stmt::If(If {
                         condition: cond,
                         then,
                         elifs: elifs.clone(),
                         else_block: else_block.clone(),
-                    },
+                        name,
+                    }),
                     function,
                     returns,
                     returns_spanned,
@@ -370,8 +384,8 @@ pub fn gen_stmt<'ctx>(
 ) -> Result<Option<ValueEnum<'ctx>>, CompileError> {
     match stmt {
         Stmt::Error(_) => panic!(),
-        Stmt::VarDecl { name, typ, value } => gen_var_decl(ctx, name, typ, value),
-        Stmt::VarSet { on, value } => {
+        Stmt::Var(Var { name, typ, value }) => gen_var_decl(ctx, name, typ, value),
+        Stmt::Set(Set { on, value }) => {
             let expr = gen_expr(ctx, value.as_ref(), "UNUSED_setas")?;
             let field = gen_primary_ref(ctx, on, "UNUSED_setto")?;
             if field.typ != expr.get_type(ctx) {
@@ -393,7 +407,11 @@ pub fn gen_stmt<'ctx>(
             Ok(_) => Ok(None),
             Err(err) => Err(err),
         },
-        Stmt::While { condition, inner } => {
+        Stmt::While(While {
+            condition,
+            inner,
+            name,
+        }) => {
             let cond_block = ctx.context.append_basic_block(function, "while_cond");
             let loop_block = ctx.context.append_basic_block(function, "while_loop");
             let continued_block = ctx.context.append_basic_block(function, "continue");
@@ -428,11 +446,12 @@ pub fn gen_stmt<'ctx>(
             ctx.builder.position_at_end(continued_block);
             Ok(returns)
         }
-        Stmt::For {
+        Stmt::For(For {
             looper,
             loopee,
             block,
-        } => {
+            name,
+        }) => {
             let loopee_eval = gen_expr(ctx, loopee, "loopee")?;
             let as_vec = loopee_eval.clone().try_as_vector();
             if as_vec.is_none() {
@@ -491,16 +510,21 @@ pub fn gen_stmt<'ctx>(
 
             Ok(returns)
         }
-        Stmt::If {
+        Stmt::If(If {
             condition,
             then,
             elifs,
             else_block,
-        } => gen_if(ctx, stmt, function, returns, returns_spanned),
-        Stmt::Return(expr) => match expr {
+            name,
+        }) => gen_if(ctx, stmt, function, returns, returns_spanned),
+        Stmt::Return(Return { 0: expr }) => match expr {
             Some(expr) => gen_expr(ctx, expr, "RETURN").map(|val| Some(val)),
             None => Ok(Some(ValueEnum::Unit(Unit {}))),
         },
+        Stmt::Break(_) => todo!(),
+        Stmt::Continue(_) => todo!(),
+        Stmt::Eval(eval) => todo!(),
+        Stmt::Match(_) => todo!(),
     }
 }
 
@@ -630,7 +654,7 @@ pub fn gen_decl_pre<'ctx>(
             params,
             decls,
         } => Ok(()),
-        Decl::Var { name, typ, value } => gen_var_decl(ctx, name, typ, value).map(|x| ()),
+        Decl::Var(Var { name, typ, value }) => gen_var_decl(ctx, name, typ, value).map(|x| ()),
     }
 }
 
@@ -640,7 +664,7 @@ pub fn gen_decl<'ctx>(
     decl: &Decl,
 ) -> Result<(), CompileError> {
     match decl {
-        Decl::Var { name, typ, value } => Ok(()),
+        Decl::Var(Var { name, typ, value }) => Ok(()),
         Decl::Function {
             name,
             generics,

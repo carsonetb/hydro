@@ -42,6 +42,7 @@ pub fn compile(ctx: &LanguageContext, link_info: LinkInfo) {
         "bin/out",
         "-lc",
         "-lgc",
+        "-lm",
     ]);
 
     for linkdir in link_info.linkdirs {

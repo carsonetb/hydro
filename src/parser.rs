@@ -33,11 +33,7 @@ pub struct Import {
 
 #[derive(Debug)]
 pub enum Decl {
-    Var {
-        name: Spanned<String>,
-        typ: Option<ParserType>,
-        value: Spanned<Box<Expr>>,
-    },
+    Var(Var),
     Function {
         name: Spanned<String>,
         generics: Vec<GenericParam>,
@@ -55,32 +51,76 @@ pub enum Decl {
 #[derive(Debug, Clone)]
 pub enum Stmt {
     Error(ErrorKind),
-    Return(Option<Spanned<Box<Expr>>>),
-    VarDecl {
-        name: Spanned<String>,
-        typ: Option<ParserType>,
-        value: Spanned<Box<Expr>>,
-    },
-    VarSet {
-        on: Spanned<Box<Primary>>,
-        value: Spanned<Box<Expr>>,
-    },
-    While {
-        condition: Spanned<Expr>,
-        inner: Vec<Spanned<Stmt>>,
-    },
-    If {
-        condition: Spanned<Expr>,
-        then: Vec<Spanned<Stmt>>,
-        elifs: Vec<(Spanned<Expr>, Vec<Spanned<Stmt>>)>,
-        else_block: Option<Vec<Spanned<Stmt>>>,
-    },
-    For {
-        looper: Spanned<String>,
-        loopee: Spanned<Expr>,
-        block: Vec<Spanned<Stmt>>,
-    },
     Expr(Spanned<Box<Expr>>),
+    Var(Var),
+    Set(Set),
+    Break(Break),
+    Continue(Continue),
+    Eval(Eval),
+    Return(Return),
+    If(If),
+    For(For),
+    Match(Match),
+    While(While),
+}
+
+#[derive(Debug, Clone)]
+pub struct Var {
+    pub name: Spanned<String>,
+    pub typ: Option<ParserType>,
+    pub value: Spanned<Box<Expr>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Set {
+    pub on: Spanned<Box<Primary>>,
+    pub value: Spanned<Box<Expr>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Break(pub Option<Spanned<String>>);
+
+#[derive(Debug, Clone)]
+pub struct Continue(pub Option<Spanned<String>>);
+
+#[derive(Debug, Clone)]
+pub struct Eval {
+    pub from: Option<Spanned<String>>,
+    pub val: Option<Spanned<Expr>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Return(pub Option<Spanned<Expr>>);
+
+#[derive(Debug, Clone)]
+pub struct If {
+    pub name: Option<Spanned<String>>,
+    pub condition: Spanned<Expr>,
+    pub then: Vec<Spanned<Stmt>>,
+    pub elifs: Vec<(Option<Spanned<String>>, Spanned<Expr>, Vec<Spanned<Stmt>>)>,
+    pub else_block: Option<Vec<Spanned<Stmt>>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct For {
+    pub name: Option<Spanned<String>>,
+    pub looper: Spanned<String>,
+    pub loopee: Spanned<Expr>,
+    pub block: Vec<Spanned<Stmt>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Match {
+    pub name: Option<Spanned<String>>,
+    pub what: Spanned<Expr>,
+    pub options: Vec<(Spanned<Box<Primary>>, Spanned<Expr>)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct While {
+    pub name: Option<Spanned<String>>,
+    pub condition: Spanned<Expr>,
+    pub inner: Vec<Spanned<Stmt>>,
 }
 
 #[derive(Debug, Clone)]
@@ -88,6 +128,13 @@ pub enum Expr {
     Unary(Spanned<String>, Box<Expr>),
     Binary(Spanned<Box<Expr>>, Spanned<String>, Spanned<Box<Expr>>),
     Primary(Spanned<Box<Primary>>),
+    Var(Var),
+    Set(Set),
+    If(Box<If>),
+    For(Box<For>),
+    Match(Box<Match>),
+    While(Box<While>),
+    Combo(Vec<Expr>),
 }
 
 #[derive(Debug, Clone)]
@@ -111,8 +158,10 @@ pub enum Primary {
 #[derive(Debug, Clone)]
 pub enum Atom {
     Literal(Spanned<ParseLiteral>),
+    Block(Vec<Spanned<Stmt>>),
     Grouping(Spanned<Expr>),
     Array(Spanned<Vec<Spanned<Expr>>>),
+    Tuple(Spanned<Vec<Spanned<Expr>>>),
     Var(Spanned<String>),
 }
 
@@ -183,7 +232,7 @@ pub fn comment<'src>() -> impl GenericParser<'src, ()> {
     single.or(multi).repeated().boxed()
 }
 
-pub fn type_parser<'src>() -> impl GenericParser<'src, ParserType> {
+pub fn type_parser<'src>() -> impl GenericParser<'src, ParserType> + Clone {
     recursive(|typ| {
         let ident = text::ascii::ident()
             .spanned()
@@ -208,7 +257,13 @@ pub fn type_parser<'src>() -> impl GenericParser<'src, ParserType> {
     })
 }
 
-pub fn literal<'src>() -> impl GenericParser<'src, Spanned<ParseLiteral>> {
+pub fn stmt_name<'src>() -> impl GenericParser<'src, Option<Spanned<String>>> + Clone {
+    just("'")
+        .ignore_then(ident().map(|s: &str| s.to_string()).spanned())
+        .or_not()
+}
+
+pub fn literal<'src>() -> impl GenericParser<'src, Spanned<ParseLiteral>> + Clone {
     let int = text::int(10)
         .from_str()
         .map(|r| match r {
@@ -242,7 +297,7 @@ pub fn literal<'src>() -> impl GenericParser<'src, Spanned<ParseLiteral>> {
 
 pub fn atom<'src>(
     expr: impl GenericParser<'src, Spanned<Expr>> + Clone,
-) -> impl Parser<'src, &'src str, Spanned<Box<Atom>>, extra::Err<Rich<'src, char>>> {
+) -> impl Parser<'src, &'src str, Spanned<Box<Atom>>, extra::Err<Rich<'src, char>>> + Clone {
     let literal = literal().map(|l| l.span.make_wrapped(Box::new(Atom::Literal(l))));
 
     let grouping = expr
@@ -282,7 +337,7 @@ enum Suffix {
 
 pub fn primary<'src>(
     expr: impl GenericParser<'src, Spanned<Expr>> + Clone + 'src,
-) -> impl Parser<'src, &'src str, Spanned<Box<Primary>>, extra::Err<Rich<'src, char>>> {
+) -> impl Parser<'src, &'src str, Spanned<Box<Primary>>, extra::Err<Rich<'src, char>>> + Clone {
     recursive(|primary| {
         let atom = atom(expr.clone())
             .map(|atom| atom.span.make_wrapped(Box::new(Primary::Atom(atom))))
@@ -346,7 +401,7 @@ pub fn primary<'src>(
     })
 }
 
-pub fn expr<'src>()
+pub fn justexpr<'src>()
 -> impl Parser<'src, &'src str, Spanned<Expr>, extra::Err<Rich<'src, char>>> + Clone {
     macro_rules! op {
         ($c:expr) => {
@@ -421,7 +476,32 @@ pub fn expr<'src>()
     })
 }
 
-pub fn var_decl<'src>() -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'src, char>>> {
+pub fn expr<'src>(
+    block: impl GenericParser<'src, Vec<Spanned<Stmt>>> + Clone + 'src,
+) -> impl GenericParser<'src, Spanned<Expr>> + Clone {
+    choice((
+        justexpr(),
+        var(block.clone()).map(Expr::Var).spanned(),
+        set(block.clone()).map(Expr::Set).spanned(),
+        if_parser(block.clone())
+            .map(|x| Expr::If(Box::new(x)))
+            .spanned(),
+        for_parser(block.clone())
+            .map(|x| Expr::For(Box::new(x)))
+            .spanned(),
+        match_parser(block.clone())
+            .map(|x| Expr::Match(Box::new(x)))
+            .spanned(),
+        while_parser(block.clone())
+            .map(|x| Expr::While(Box::new(x)))
+            .spanned(),
+    ))
+    .boxed() // istgtspmo rst s vbcd
+}
+
+pub fn var<'src>(
+    block: impl GenericParser<'src, Vec<Spanned<Stmt>>> + Clone + 'src,
+) -> impl GenericParser<'src, Var> + Clone {
     let ident = text::ascii::ident().spanned();
     text::ascii::keyword("var")
         .labelled("var decl")
@@ -429,9 +509,9 @@ pub fn var_decl<'src>() -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'s
         .ignore_then(ident)
         .then(just(':').padded().ignore_then(type_parser()).or_not())
         .then_ignore(just("=").padded())
-        .then(expr())
+        .then(expr(block))
         .then_ignore(just(";"))
-        .map(|((name, typ), value)| Stmt::VarDecl {
+        .map(|((name, typ), value)| Var {
             name: name.span.make_wrapped(name.to_string()),
             typ: typ,
             value: value.span.make_wrapped(Box::new(value.inner)),
@@ -439,72 +519,144 @@ pub fn var_decl<'src>() -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'s
         .boxed()
 }
 
-pub fn stmt<'src>(
+pub fn set<'src>(
     block: impl GenericParser<'src, Vec<Spanned<Stmt>>> + Clone + 'src,
-) -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'src, char>>> + Clone {
-    let set = primary(expr())
+) -> impl GenericParser<'src, Set> + Clone {
+    primary(expr(block.clone()))
         .labelled("var set")
         .padded()
         .spanned()
         .then_ignore(just("="))
-        .then(expr())
-        .then_ignore(just(";").padded())
-        .map(|(on, value)| Stmt::VarSet {
+        .then(expr(block))
+        .map(|(on, value)| Set {
             on: on.span.make_wrapped(on.inner.inner),
             value: value.span.make_wrapped(Box::new(value.inner)),
         })
-        .boxed();
+        .boxed()
+}
 
-    let ret = text::keyword("return")
+pub fn if_parser<'src>(
+    block: impl GenericParser<'src, Vec<Spanned<Stmt>>> + Clone + 'src,
+) -> impl GenericParser<'src, If> + Clone {
+    text::keyword("if")
         .padded()
-        .ignore_then(expr().or_not())
-        .then_ignore(just(";").padded())
-        .map(|expr| match expr {
-            Some(expr) => Stmt::Return(Some(expr.span.make_wrapped(Box::new(expr.inner)))),
-            None => Stmt::Return(None),
-        });
-
-    let while_stmt = text::keyword("while")
-        .padded()
-        .ignore_then(expr())
-        .then(block.clone())
-        .map(|(condition, block)| Stmt::While {
-            condition,
-            inner: block,
-        });
-
-    let if_stmt = text::keyword("if")
-        .padded()
-        .ignore_then(expr())
+        .ignore_then(stmt_name())
+        .then(expr(block.clone()))
         .then(block.clone())
         .then(
             keyword("elif")
-                .ignore_then(expr())
+                .ignore_then(stmt_name())
+                .then(expr(block.clone()))
                 .then(block.clone())
+                .map(|((name, condition), body)| (name, condition, body))
                 .repeated()
                 .collect::<Vec<_>>(),
         )
         .then(keyword("else").ignore_then(block.clone()).or_not())
-        .map(|(((condition, then), elifs), else_block)| Stmt::If {
+        .map(|((((name, condition), then), elifs), else_block)| If {
+            name,
             condition,
             then,
             elifs,
             else_block,
-        });
+        })
+}
 
-    let for_stmt = keyword("for")
+pub fn for_parser<'src>(
+    block: impl GenericParser<'src, Vec<Spanned<Stmt>>> + Clone + 'src,
+) -> impl GenericParser<'src, For> + Clone {
+    keyword("for")
         .padded()
-        .ignore_then(ident().spanned().padded())
+        .ignore_then(stmt_name())
+        .then(ident().spanned().padded())
         .then_ignore(keyword("in"))
-        .then(expr())
+        .then(expr(block.clone()))
         .then(block.clone())
-        .map(|((looper, loopee), block)| Stmt::For {
+        .map(|(((name, looper), loopee), block)| For {
+            name,
             looper: looper.span.make_wrapped(looper.inner.to_string()),
             loopee,
             block,
+        })
+}
+
+pub fn match_parser<'src>(
+    block: impl GenericParser<'src, Vec<Spanned<Stmt>>> + Clone + 'src,
+) -> impl GenericParser<'src, Match> + Clone {
+    keyword("match")
+        .padded()
+        .ignore_then(stmt_name())
+        .then(expr(block.clone()))
+        .then(
+            primary(expr(block.clone()))
+                .then_ignore(just("->").padded())
+                .then(expr(block.clone()))
+                .then_ignore(just(";").padded())
+                .repeated()
+                .collect::<Vec<_>>()
+                .delimited_by(just("{").padded(), just("}").padded()),
+        )
+        .map(|((name, what), options)| Match {
+            name,
+            what,
+            options,
+        })
+}
+
+pub fn while_parser<'src>(
+    block: impl GenericParser<'src, Vec<Spanned<Stmt>>> + Clone + 'src,
+) -> impl GenericParser<'src, While> + Clone {
+    text::keyword("while")
+        .padded()
+        .ignore_then(stmt_name())
+        .then(expr(block.clone()))
+        .then(block.clone())
+        .map(|((name, condition), block)| While {
+            name,
+            condition,
+            inner: block,
+        })
+}
+
+pub fn stmt<'src>(
+    block: impl GenericParser<'src, Vec<Spanned<Stmt>>> + Clone + 'src,
+) -> impl Parser<'src, &'src str, Stmt, extra::Err<Rich<'src, char>>> + Clone {
+    let break_stmt = keyword("break")
+        .padded()
+        .ignore_then(stmt_name())
+        .then_ignore(just(";").padded())
+        .map(|name| Stmt::Break(Break(name)));
+
+    let continue_stmt = keyword("continue")
+        .padded()
+        .ignore_then(stmt_name())
+        .then_ignore(just(";").padded())
+        .map(|name| Stmt::Continue(Continue(name)));
+
+    let eval = text::keyword("eval")
+        .padded()
+        .ignore_then(stmt_name())
+        .then(expr(block.clone()).or_not())
+        .then_ignore(just(";").padded())
+        .map(|(from, val)| Stmt::Eval(Eval { from, val }));
+
+    let ret = text::keyword("return")
+        .padded()
+        .ignore_then(expr(block.clone()).or_not())
+        .then_ignore(just(";").padded())
+        .map(|expr| match expr {
+            Some(expr) => Stmt::Return(Return(Some(expr.span.make_wrapped(expr.inner)))),
+            None => Stmt::Return(Return(None)),
         });
 
-    let just_expr = expr()
+    let var_stmt = var(block.clone()).map(Stmt::Var);
+    let set_stmt = set(block.clone()).map(Stmt::Set);
+    let if_stmt = if_parser(block.clone()).map(Stmt::If);
+    let for_stmt = for_parser(block.clone()).map(Stmt::For);
+    let match_stmt = match_parser(block.clone()).map(Stmt::Match);
+    let while_stmt = while_parser(block.clone()).map(Stmt::While);
+
+    let just_expr = expr(block.clone())
         .then_ignore(just(";").padded())
         .map(|expression| Stmt::Expr(expression.span.make_wrapped(Box::new(expression.inner))));
 
@@ -517,14 +669,16 @@ pub fn stmt<'src>(
     );
 
     choice((
-        var_decl(),
-        ret,
-        set,
-        while_stmt,
-        if_stmt,
-        for_stmt,
         just_expr,
+        var_stmt,
+        set_stmt,
+        break_stmt,
+        continue_stmt,
+        eval,
+        ret,
     ))
+    .then_ignore(just(";").padded())
+    .or(choice((if_stmt, for_stmt, match_stmt, while_stmt)))
     .recover_with(recovery)
     .then_ignore(comment())
     .labelled("statement")
@@ -532,7 +686,7 @@ pub fn stmt<'src>(
 }
 
 pub fn block<'src>()
--> impl Parser<'src, &'src str, Vec<Spanned<Stmt>>, extra::Err<Rich<'src, char>>> {
+-> impl Parser<'src, &'src str, Vec<Spanned<Stmt>>, extra::Err<Rich<'src, char>>> + Clone {
     recursive(|block| {
         stmt(block)
             .spanned()
@@ -543,7 +697,8 @@ pub fn block<'src>()
 }
 
 pub fn params<'src>()
--> impl Parser<'src, &'src str, Vec<(Spanned<String>, ParserType)>, extra::Err<Rich<'src, char>>> {
+-> impl Parser<'src, &'src str, Vec<(Spanned<String>, ParserType)>, extra::Err<Rich<'src, char>>> + Clone
+{
     text::ident()
         .spanned()
         .padded()
@@ -555,12 +710,9 @@ pub fn params<'src>()
         .delimited_by(just("(").padded(), just(")").padded())
 }
 
-pub fn decl<'src>() -> impl Parser<'src, &'src str, Decl, extra::Err<Rich<'src, char>>> {
+pub fn decl<'src>() -> impl Parser<'src, &'src str, Decl, extra::Err<Rich<'src, char>>> + Clone {
     recursive(|decl| {
-        let var = var_decl().map(|decl| match decl {
-            Stmt::VarDecl { name, typ, value } => Decl::Var { name, typ, value },
-            _ => panic!(),
-        });
+        let var = var(block()).map(Decl::Var);
         let function = text::keyword("fn")
             .padded()
             .ignore_then(text::ident().spanned().padded()) // TODO: Function generic params.
