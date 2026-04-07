@@ -14,6 +14,7 @@ use inkwell::{
     types::{AnyType, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, StructType},
     values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue},
 };
+use strum_macros::EnumIs;
 
 use crate::{
     bool::Bool,
@@ -25,8 +26,8 @@ use crate::{
     float::Float,
     int::Int,
     parser::{
-        Atom, Decl, Expr, For, If, ParseLiteral, ParserType, Primary, Program, Return, Set, Stmt,
-        Var, While,
+        Atom, Break, Continue, Decl, Eval, Expr, For, If, Match, ParseLiteral, ParserType, Primary,
+        Program, Return, Set, Stmt, Var, While,
     },
     string::Str,
     types::{BasicBuiltin, Metatype, MetatypeBuilder, TypeID},
@@ -63,6 +64,18 @@ impl CompileError {
     }
 }
 
+#[derive(EnumIs)]
+pub enum StmtEval<'ctx> {
+    None,
+    Break(Option<Spanned<String>>),
+    Continue(Option<Spanned<String>>),
+    Eval {
+        name: Option<Spanned<String>>,
+        value: Spanned<ValueEnum<'ctx>>,
+    },
+    Return(Spanned<ValueEnum<'ctx>>),
+}
+
 pub fn gen_literal<'ctx>(
     ctx: &LanguageContext<'ctx>,
     literal: &ParseLiteral,
@@ -77,14 +90,21 @@ pub fn gen_literal<'ctx>(
     }
 }
 
-pub fn gen_atom<'ctx>(
+struct FunctionInfo<'ctx> {
+    function: FunctionValue<'ctx>,
+    returns: TypeID,
+    returns_spanned: Option<ParserType>,
+}
+
+fn gen_atom<'ctx>(
     ctx: &mut LanguageContext<'ctx>,
+    info: &FunctionInfo<'ctx>,
     atom: &Atom,
     into_name: &str,
 ) -> Result<ValueEnum<'ctx>, CompileError> {
     match atom {
         Atom::Literal(literal) => Ok(gen_literal(ctx, literal, into_name)),
-        Atom::Grouping(expr) => gen_expr(ctx, expr, into_name),
+        Atom::Grouping(expr) => gen_expr(ctx, info, expr, into_name),
         Atom::Var(name) => ctx.get_field(name.clone()).map(|val| val.value.clone()),
         Atom::Array(exprs) => {
             if exprs.len() == 0 {
@@ -95,7 +115,12 @@ pub fn gen_atom<'ctx>(
             }
             let mut values = Vec::<ValueEnum<'ctx>>::new();
             for (i, expr) in exprs.iter().enumerate() {
-                values.push(gen_expr(ctx, expr, &format!("{}_elem{}", into_name, i))?);
+                values.push(gen_expr(
+                    ctx,
+                    info,
+                    expr,
+                    &format!("{}_elem{}", into_name, i),
+                )?);
             }
             let vec_type = TypeID::new("Vector", vec![values[0].get_type(ctx)]);
             ctx.get_with_gen_ext(vec_type.clone());
@@ -111,25 +136,41 @@ pub fn gen_atom<'ctx>(
             }
             Ok(ValueEnum::Vector(vec))
         }
-        Atom::Block(spanneds) => todo!(),
-        Atom::Tuple(spanned) => todo!(),
+        Atom::Block(stmts) => match gen_stmts(ctx, stmts, info, into_name)? {
+            StmtEval::Eval { name, value } => {
+                if name.is_some() {
+                    return Err(CompileError::new(
+                        name.unwrap().span,
+                        "No higher order statement to jump to (this is a block).",
+                    ));
+                };
+                Ok(value.inner)
+            }
+            _ => Err(CompileError::new(
+                stmts.last().unwrap().span,
+                "Must evaluate with `eval` keyword.",
+            )),
+        },
+        Atom::Tuple(values) => todo!(),
     }
 }
 
-pub fn gen_primary<'ctx>(
+fn gen_primary<'ctx>(
     ctx: &mut LanguageContext<'ctx>,
+    info: &FunctionInfo<'ctx>,
     prim: &Primary,
     into_name: &str,
 ) -> Result<ValueEnum<'ctx>, CompileError> {
     match prim {
-        Primary::Atom(atom) => gen_atom(ctx, atom, into_name),
+        Primary::Atom(atom) => gen_atom(ctx, info, atom, into_name),
         Primary::Call { on, generics, args } => {
-            let on_eval = gen_primary(ctx, on, &format!("{}_callee", into_name))?;
+            let on_eval = gen_primary(ctx, info, on, &format!("{}_callee", into_name))?;
             let on_typ = on_eval.get_type(ctx);
             let mut args_eval = Vec::<ValueEnum<'ctx>>::new();
             for (i, arg) in args.iter().enumerate() {
                 args_eval.push(gen_expr(
                     ctx,
+                    info,
                     arg,
                     &format!("{}_callee_arg{}", into_name, i),
                 )?);
@@ -155,13 +196,13 @@ pub fn gen_primary<'ctx>(
             .map_err(|err| CompileError::new(on.span, &err))?)
         }
         Primary::Member { on, name } => {
-            let on = gen_primary(ctx, on, &format!("{}_on", into_name))?;
+            let on = gen_primary(ctx, info, on, &format!("{}_on", into_name))?;
             on.member(ctx, name.clone(), into_name)
         }
         Primary::Slice { on, expr } => {
-            let on_eval = gen_primary(ctx, on, &format!("{}_callee", into_name))?;
+            let on_eval = gen_primary(ctx, info, on, &format!("{}_callee", into_name))?;
             let on_typ = on_eval.get_type(ctx);
-            let slice_eval = gen_expr(ctx, expr, &format!("{into_name}_slice"))?;
+            let slice_eval = gen_expr(ctx, info, expr, &format!("{into_name}_slice"))?;
             let slice_fn = on_eval
                 .member(
                     ctx,
@@ -177,8 +218,9 @@ pub fn gen_primary<'ctx>(
     }
 }
 
-pub fn gen_primary_ref<'ctx>(
+fn gen_primary_ref<'ctx>(
     ctx: &mut LanguageContext<'ctx>,
+    info: &FunctionInfo<'ctx>,
     prim: &Primary,
     into_name: &str,
 ) -> Result<ValueRef<'ctx>, CompileError> {
@@ -196,7 +238,7 @@ pub fn gen_primary_ref<'ctx>(
             "This could technically be valid if the function returned a field, but that would have to be explicit which is not supported.",
         )),
         Primary::Member { on, name } => {
-            let on = gen_primary(ctx, on, &format!("{into_name}_on"))?;
+            let on = gen_primary(ctx, info, on, &format!("{into_name}_on"))?;
             on.member_ref(ctx, name.clone(), into_name)
         }
         Primary::Slice { on, expr } => {
@@ -205,16 +247,17 @@ pub fn gen_primary_ref<'ctx>(
     }
 }
 
-pub fn gen_expr<'ctx>(
+fn gen_expr<'ctx>(
     ctx: &mut LanguageContext<'ctx>,
+    info: &FunctionInfo<'ctx>,
     expr: &Expr,
     into_name: &str,
 ) -> Result<ValueEnum<'ctx>, CompileError> {
     match expr {
         Expr::Unary(op, right) => todo!(),
         Expr::Binary(left, op, right) => {
-            let left_val = gen_expr(ctx, left, &format!("{}_left", into_name))?;
-            let right_val = gen_expr(ctx, right, &format!("{}_right", into_name))?;
+            let left_val = gen_expr(ctx, info, left, &format!("{}_left", into_name))?;
+            let right_val = gen_expr(ctx, info, right, &format!("{}_right", into_name))?;
             let left_type = left_val.get_type(ctx);
             let right_type = right_val.get_type(ctx);
             if left_type != right_type {
@@ -242,7 +285,7 @@ pub fn gen_expr<'ctx>(
                 .call(ctx, vec![left_val, right_val], &into_name)
                 .map_err(|err| CompileError::new(op.span, &err)))?
         }
-        Expr::Primary(primary) => gen_primary(ctx, primary, &into_name),
+        Expr::Primary(primary) => gen_primary(ctx, info, primary, &into_name),
         Expr::Var(var) => todo!(),
         Expr::Set(set) => todo!(),
         Expr::If(_) => todo!(),
@@ -253,13 +296,21 @@ pub fn gen_expr<'ctx>(
     }
 }
 
-pub fn gen_if<'ctx>(
+fn gen_match<'ctx>(
+    ctx: &LanguageContext<'ctx>,
+    info: &FunctionInfo<'ctx>,
+    stmt: &Match,
+    into_name: &str,
+) -> Result<StmtEval<'ctx>, CompileError> {
+    todo!()
+}
+
+fn gen_if<'ctx>(
     ctx: &mut LanguageContext<'ctx>,
+    info: &FunctionInfo<'ctx>,
     stmt: &Stmt,
-    function: FunctionValue<'ctx>,
-    returns: TypeID,
-    returns_spanned: Option<ParserType>,
-) -> Result<Option<ValueEnum<'ctx>>, CompileError> {
+    into_name: &str,
+) -> Result<StmtEval<'ctx>, CompileError> {
     match stmt {
         Stmt::If(If {
             condition,
@@ -268,11 +319,11 @@ pub fn gen_if<'ctx>(
             else_block,
             name,
         }) => {
-            let truthy_block = ctx.context.append_basic_block(function, "truthy");
-            let falsey_block = ctx.context.append_basic_block(function, "falsey");
-            let continued_block = ctx.context.append_basic_block(function, "continue");
+            let truthy_block = ctx.context.append_basic_block(info.function, "truthy");
+            let falsey_block = ctx.context.append_basic_block(info.function, "falsey");
+            let continued_block = ctx.context.append_basic_block(info.function, "continue");
 
-            let cond_eval = gen_expr(ctx, condition, "while_condition")?;
+            let cond_eval = gen_expr(ctx, info, condition, "while_condition")?;
             if cond_eval.get_type(ctx) != TypeID::from_base("Bool") {
                 return Err(CompileError::new(
                     condition.span,
@@ -289,7 +340,7 @@ pub fn gen_if<'ctx>(
             );
 
             ctx.builder.position_at_end(truthy_block);
-            let mut if_returns = gen_stmts(ctx, then, function, &returns, returns_spanned.clone())?;
+            let mut if_returns = gen_stmts(ctx, then, info, into_name)?;
             if if_returns.is_none() {
                 ctx.builder.build_unconditional_branch(continued_block);
             }
@@ -302,6 +353,7 @@ pub fn gen_if<'ctx>(
                 let (name, cond, then) = elifs.remove(0);
                 let elif_returns = gen_if(
                     ctx,
+                    info,
                     &Stmt::If(If {
                         condition: cond,
                         then,
@@ -309,27 +361,19 @@ pub fn gen_if<'ctx>(
                         else_block: else_block.clone(),
                         name,
                     }),
-                    function,
-                    returns,
-                    returns_spanned,
+                    into_name,
                 )?;
-                if_returns = if if_returns.is_some() {
+                if_returns = if if_returns.is_return() {
                     elif_returns
                 } else {
-                    None
+                    StmtEval::None
                 };
             } else if else_block.is_some() {
-                let else_returns = gen_stmts(
-                    ctx,
-                    else_block.as_ref().unwrap(),
-                    function,
-                    &returns,
-                    returns_spanned,
-                )?;
-                if_returns = if if_returns.is_some() {
+                let else_returns = gen_stmts(ctx, else_block.as_ref().unwrap(), info, into_name)?;
+                if_returns = if if_returns.is_return() {
                     else_returns
                 } else {
-                    None
+                    StmtEval::None
                 }
             }
 
@@ -344,13 +388,14 @@ pub fn gen_if<'ctx>(
     }
 }
 
-pub fn gen_var_decl<'ctx>(
+fn gen_var_decl<'ctx>(
     ctx: &mut LanguageContext<'ctx>,
+    info: &FunctionInfo<'ctx>,
     name: &Spanned<String>,
     typ: &Option<ParserType>,
     value: &Spanned<Box<Expr>>,
-) -> Result<Option<ValueEnum<'ctx>>, CompileError> {
-    let eval = gen_expr(ctx, value.as_ref(), &name.inner);
+) -> Result<StmtEval<'ctx>, CompileError> {
+    let eval = gen_expr(ctx, info, value.as_ref(), &name.inner);
     if eval.is_err() {
         return Err(eval.unwrap_err());
     }
@@ -372,22 +417,21 @@ pub fn gen_var_decl<'ctx>(
     }
     let field = Field::new(eval, &name.inner);
     ctx.add_field(&name.inner, field);
-    Ok(None)
+    Ok(StmtEval::None)
 }
 
-pub fn gen_stmt<'ctx>(
+fn gen_stmt<'ctx>(
     ctx: &mut LanguageContext<'ctx>,
+    info: &FunctionInfo<'ctx>,
     stmt: &Stmt,
-    function: FunctionValue<'ctx>,
-    returns: TypeID,
-    returns_spanned: Option<ParserType>,
-) -> Result<Option<ValueEnum<'ctx>>, CompileError> {
+    into_name: &str,
+) -> Result<StmtEval<'ctx>, CompileError> {
     match stmt {
         Stmt::Error(_) => panic!(),
-        Stmt::Var(Var { name, typ, value }) => gen_var_decl(ctx, name, typ, value),
+        Stmt::Var(Var { name, typ, value }) => gen_var_decl(ctx, info, name, typ, value),
         Stmt::Set(Set { on, value }) => {
-            let expr = gen_expr(ctx, value.as_ref(), "UNUSED_setas")?;
-            let field = gen_primary_ref(ctx, on, "UNUSED_setto")?;
+            let expr = gen_expr(ctx, info, value.as_ref(), "UNUSED_setas")?;
+            let field = gen_primary_ref(ctx, info, on, "UNUSED_setto")?;
             if field.typ != expr.get_type(ctx) {
                 return Err(CompileError::with_notes(
                     value.span,
@@ -401,10 +445,10 @@ pub fn gen_stmt<'ctx>(
             };
             ctx.builder.build_store(field.ptr, expr.get_value());
 
-            Ok(None)
+            Ok(StmtEval::None)
         }
-        Stmt::Expr(expr) => match gen_expr(ctx, expr.as_ref(), "UNUSED") {
-            Ok(_) => Ok(None),
+        Stmt::Expr(expr) => match gen_expr(ctx, info, expr.as_ref(), "UNUSED") {
+            Ok(_) => Ok(StmtEval::None),
             Err(err) => Err(err),
         },
         Stmt::While(While {
@@ -412,14 +456,14 @@ pub fn gen_stmt<'ctx>(
             inner,
             name,
         }) => {
-            let cond_block = ctx.context.append_basic_block(function, "while_cond");
-            let loop_block = ctx.context.append_basic_block(function, "while_loop");
-            let continued_block = ctx.context.append_basic_block(function, "continue");
+            let cond_block = ctx.context.append_basic_block(info.function, "while_cond");
+            let loop_block = ctx.context.append_basic_block(info.function, "while_loop");
+            let continued_block = ctx.context.append_basic_block(info.function, "continue");
 
             ctx.builder.build_unconditional_branch(cond_block);
             ctx.builder.position_at_end(cond_block);
 
-            let cond_eval = gen_expr(ctx, condition, "while_condition")?;
+            let cond_eval = gen_expr(ctx, info, condition, "while_condition")?;
             if cond_eval.get_type(ctx) != TypeID::from_base("Bool") {
                 return Err(CompileError::new(
                     condition.span,
@@ -438,7 +482,7 @@ pub fn gen_stmt<'ctx>(
                 .unwrap();
             ctx.builder.position_at_end(loop_block);
 
-            let returns = gen_stmts(ctx, inner, function, &returns, returns_spanned)?;
+            let returns = gen_stmts(ctx, inner, info, into_name)?;
             if returns.is_none() {
                 ctx.builder.build_unconditional_branch(cond_block);
             } // TODO: Warning here
@@ -452,7 +496,7 @@ pub fn gen_stmt<'ctx>(
             block,
             name,
         }) => {
-            let loopee_eval = gen_expr(ctx, loopee, "loopee")?;
+            let loopee_eval = gen_expr(ctx, info, loopee, "loopee")?;
             let as_vec = loopee_eval.clone().try_as_vector();
             if as_vec.is_none() {
                 return Err(CompileError::new(
@@ -471,9 +515,9 @@ pub fn gen_stmt<'ctx>(
                 .unwrap();
             ctx.builder.build_store(ind, ctx.int(0));
 
-            let cond_block = ctx.context.append_basic_block(function, "for_cond");
-            let loop_block = ctx.context.append_basic_block(function, "for_loop");
-            let continue_block = ctx.context.append_basic_block(function, "continue");
+            let cond_block = ctx.context.append_basic_block(info.function, "for_cond");
+            let loop_block = ctx.context.append_basic_block(info.function, "for_loop");
+            let continue_block = ctx.context.append_basic_block(info.function, "continue");
 
             ctx.builder.build_unconditional_branch(cond_block);
             ctx.builder.position_at_end(cond_block);
@@ -495,7 +539,7 @@ pub fn gen_stmt<'ctx>(
 
             let vec_item = as_vec.get(ctx, &ind_val, &looper.inner);
             ctx.add_field(&looper.inner, Field::new(vec_item, &looper.inner));
-            let returns = gen_stmts(ctx, block, function, &returns, returns_spanned)?;
+            let returns = gen_stmts(ctx, block, info, into_name)?;
             if returns.is_none() {
                 ctx.builder.build_store(
                     ind,
@@ -516,62 +560,73 @@ pub fn gen_stmt<'ctx>(
             elifs,
             else_block,
             name,
-        }) => gen_if(ctx, stmt, function, returns, returns_spanned),
-        Stmt::Return(Return { 0: expr }) => match expr {
-            Some(expr) => gen_expr(ctx, expr, "RETURN").map(|val| Some(val)),
-            None => Ok(Some(ValueEnum::Unit(Unit {}))),
+        }) => gen_if(ctx, info, stmt, into_name),
+        Stmt::Match(stmt) => gen_match(ctx, info, stmt, into_name),
+        Stmt::Return(Return { 0: expr }) => match &expr.inner {
+            Some(expr) => Ok(StmtEval::Return(expr.span.make_wrapped(gen_expr(
+                ctx,
+                info,
+                &expr.inner,
+                "RETURN",
+            )?))),
+            None => Ok(StmtEval::Return(
+                expr.span.make_wrapped(ValueEnum::Unit(Unit {})),
+            )),
         },
-        Stmt::Break(_) => todo!(),
-        Stmt::Continue(_) => todo!(),
-        Stmt::Eval(eval) => todo!(),
-        Stmt::Match(_) => todo!(),
+        Stmt::Eval(Eval { from: name, val }) => Ok(StmtEval::Eval {
+            name: name.clone(),
+            value: match &val.inner {
+                Some(val) => val
+                    .span
+                    .make_wrapped(gen_expr(ctx, info, &val.inner, into_name)?),
+                None => val.span.make_wrapped(ValueEnum::Unit(Unit {})),
+            },
+        }),
+        Stmt::Break(Break(name)) => Ok(StmtEval::Break(name.clone())),
+        Stmt::Continue(Continue(name)) => Ok(StmtEval::Continue(name.clone())),
     }
 }
 
-pub fn gen_stmts<'ctx>(
+fn gen_stmts<'ctx>(
     ctx: &mut LanguageContext<'ctx>,
     stmts: &Vec<Spanned<Stmt>>,
-    function: FunctionValue<'ctx>,
-    returns: &TypeID,
-    returns_spanned: Option<ParserType>,
-) -> Result<Option<ValueEnum<'ctx>>, CompileError> {
+    info: &FunctionInfo<'ctx>,
+    into_name: &str,
+) -> Result<StmtEval<'ctx>, CompileError> {
     ctx.push_scope();
     for stmt in stmts.iter() {
-        match gen_stmt(
-            ctx,
-            stmt,
-            function,
-            returns.clone(),
-            returns_spanned.clone(),
-        )? {
-            Some(ret) => {
-                if &ret.get_type(ctx) != returns {
+        let eval = gen_stmt(ctx, info, stmt, into_name)?;
+        match eval {
+            StmtEval::Return(ref ret) => {
+                if ret.get_type(ctx) != info.returns {
                     let mut out = CompileError::new(
                         stmt.span,
-                        &format!("Incorrect return type, expected `{}`", returns),
+                        &format!("Incorrect return type, expected `{}`", info.returns),
                     );
-                    if returns_spanned.is_some() {
+                    if info.returns_spanned.is_some() {
                         out.0.push((
-                            returns_spanned.as_ref().unwrap().span,
+                            info.returns_spanned.as_ref().unwrap().span,
                             "Return type specified here.".to_string(),
                         ));
                     }
                     return Err(out);
                 }
-                let ret_value: Option<&dyn BasicValue<'ctx>> =
-                    if ret.clone().try_as_unit().is_none() {
-                        Some(&ret.get_value())
-                    } else {
-                        None
-                    };
+                let ret_value: Option<&dyn BasicValue<'ctx>> = if ret.inner.is_unit() {
+                    Some(&ret.get_value())
+                } else {
+                    None
+                };
                 ctx.builder.build_return(ret_value);
-                return Ok(Some(ret));
+                return Ok(eval);
             }
-            None => continue,
+            StmtEval::None => continue,
+            _ => {
+                return Ok(eval);
+            }
         }
     }
     ctx.pop_scope();
-    Ok(None)
+    Ok(StmtEval::None)
 }
 
 pub fn gen_decl_pre<'ctx>(
@@ -579,6 +634,7 @@ pub fn gen_decl_pre<'ctx>(
     ctx: &mut LanguageContext<'ctx>,
     decl: &Decl,
     inside: Option<TypeID>,
+    init_fn: FunctionValue<'ctx>,
 ) -> Result<(), CompileError> {
     match decl {
         Decl::Function {
@@ -654,7 +710,18 @@ pub fn gen_decl_pre<'ctx>(
             params,
             decls,
         } => Ok(()),
-        Decl::Var(Var { name, typ, value }) => gen_var_decl(ctx, name, typ, value).map(|x| ()),
+        Decl::Var(Var { name, typ, value }) => gen_var_decl(
+            ctx,
+            &FunctionInfo {
+                function: init_fn,
+                returns: TypeID::from_base("Unit"),
+                returns_spanned: None,
+            },
+            name,
+            typ,
+            value,
+        )
+        .map(|x| ()),
     }
 }
 
@@ -664,7 +731,7 @@ pub fn gen_decl<'ctx>(
     decl: &Decl,
 ) -> Result<(), CompileError> {
     match decl {
-        Decl::Var(Var { name, typ, value }) => Ok(()),
+        Decl::Var(Var { name, typ, value }) => todo!(),
         Decl::Function {
             name,
             generics,
@@ -694,9 +761,12 @@ pub fn gen_decl<'ctx>(
             let returns_val = gen_stmts(
                 ctx,
                 &body.inner,
-                function,
-                &returns,
-                returns_spanned.clone(),
+                &FunctionInfo {
+                    function: function,
+                    returns: returns.clone(),
+                    returns_spanned: returns_spanned.clone(),
+                },
+                "UNUSED",
             )?;
 
             if returns_val.is_none() {
@@ -763,7 +833,7 @@ pub fn gen_decl<'ctx>(
             );
             builder.add_initializer(init_fn);
 
-            gen_decls_pre(ctx, decls, Some(TypeID::from_base(name)));
+            gen_decls_pre(ctx, decls, Some(TypeID::from_base(name)), init_llvm_fn);
 
             let mut body = Vec::<BasicTypeEnum<'ctx>>::new();
             let mut members = BTreeMap::<String, ClassMember>::new();
@@ -888,9 +958,12 @@ pub fn gen_decl<'ctx>(
                         let returns_val = gen_stmts(
                             ctx,
                             &body.inner,
-                            function_val,
-                            &returns,
-                            returns_spanned.clone(),
+                            &FunctionInfo {
+                                function: function_val,
+                                returns: returns.clone(),
+                                returns_spanned: returns_spanned.clone(),
+                            },
+                            "UNUSED",
                         )?;
 
                         if returns_val.is_none() {
@@ -921,9 +994,10 @@ pub fn gen_decls_pre<'ctx>(
     ctx: &mut LanguageContext<'ctx>,
     decls: &Vec<Decl>,
     inside: Option<TypeID>,
+    init_fn: FunctionValue<'ctx>,
 ) {
     for decl in decls {
-        match gen_decl_pre(ctx.context, ctx, decl, inside.clone()) {
+        match gen_decl_pre(ctx.context, ctx, decl, inside.clone(), init_fn) {
             Ok(_) => continue,
             Err(err) => ctx.error(err),
         }
@@ -946,6 +1020,7 @@ pub fn do_codegen<'ctx>(
     program: Program,
     source: &PathBuf,
     build: &PathBuf,
+    main: FunctionValue<'ctx>,
 ) -> Result<LinkInfo, ()> {
     let filename = path
         .clone()
@@ -994,7 +1069,7 @@ pub fn do_codegen<'ctx>(
         };
     }
 
-    gen_decls_pre(ctx, &program.decls, None);
+    gen_decls_pre(ctx, &program.decls, None, main);
     gen_decls(ctx, &program.decls);
 
     let main = ctx.get_field_nospan("main");

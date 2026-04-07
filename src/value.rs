@@ -5,7 +5,7 @@ use inkwell::{
     types::{AnyTypeEnum, BasicType, BasicTypeEnum},
     values::{AnyValue, BasicValueEnum, PointerValue},
 };
-use strum_macros::EnumTryAs;
+use strum_macros::{EnumIs, EnumTryAs};
 
 use crate::{
     bool::Bool,
@@ -72,7 +72,7 @@ pub fn any_to_basic<'ctx>(any: AnyTypeEnum<'ctx>) -> Option<BasicTypeEnum<'ctx>>
 }
 
 #[enum_dispatch]
-#[derive(Debug, EnumTryAs, Clone)]
+#[derive(Debug, EnumTryAs, EnumIs, Clone)]
 pub enum ValueEnum<'ctx> {
     Unit(Unit),
     Bool(Bool<'ctx>),

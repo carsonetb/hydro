@@ -86,11 +86,11 @@ pub struct Continue(pub Option<Spanned<String>>);
 #[derive(Debug, Clone)]
 pub struct Eval {
     pub from: Option<Spanned<String>>,
-    pub val: Option<Spanned<Expr>>,
+    pub val: Spanned<Option<Spanned<Expr>>>,
 }
 
 #[derive(Debug, Clone)]
-pub struct Return(pub Option<Spanned<Expr>>);
+pub struct Return(pub Spanned<Option<Spanned<Expr>>>);
 
 #[derive(Debug, Clone)]
 pub struct If {
@@ -637,16 +637,31 @@ pub fn stmt<'src>(
         .padded()
         .ignore_then(stmt_name())
         .then(expr(block.clone()).or_not())
+        .spanned()
         .then_ignore(just(";").padded())
-        .map(|(from, val)| Stmt::Eval(Eval { from, val }));
+        .map(
+            |Spanned {
+                 inner: (from, val),
+                 span,
+             }| {
+                Stmt::Eval(Eval {
+                    from,
+                    val: span.make_wrapped(val),
+                })
+            },
+        );
 
     let ret = text::keyword("return")
         .padded()
         .ignore_then(expr(block.clone()).or_not())
+        .spanned()
         .then_ignore(just(";").padded())
-        .map(|expr| match expr {
-            Some(expr) => Stmt::Return(Return(Some(expr.span.make_wrapped(expr.inner)))),
-            None => Stmt::Return(Return(None)),
+        .map(|expr| match expr.inner {
+            Some(inner) => Stmt::Return(Return(
+                expr.span
+                    .make_wrapped(Some(inner.span.make_wrapped(inner.inner))),
+            )),
+            None => Stmt::Return(Return(expr.span.make_wrapped(None))),
         });
 
     let var_stmt = var(block.clone()).map(Stmt::Var);

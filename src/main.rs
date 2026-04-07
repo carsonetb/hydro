@@ -52,7 +52,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let entry = llvm_ctx.append_basic_block(main_val, "entry");
     ctx.builder.position_at_end(entry);
 
-    let link_info = do_codegen(&llvm_ctx, &mut ctx, path, program, &source, &build).unwrap();
+    let link_info = do_codegen(
+        &llvm_ctx, &mut ctx, path, program, &source, &build, main_val,
+    )
+    .unwrap();
 
     ctx.builder.build_return(Some(&ctx.int(0))).unwrap();
 
