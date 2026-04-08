@@ -14,7 +14,7 @@ use inkwell::{
     types::{AnyType, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, StructType},
     values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue},
 };
-use strum_macros::EnumIs;
+use strum_macros::{EnumIs, EnumTryAs};
 
 use crate::{
     bool::Bool,
@@ -64,15 +64,13 @@ impl CompileError {
     }
 }
 
-#[derive(EnumIs)]
+#[derive(Debug, EnumIs, EnumTryAs)]
 pub enum StmtEval<'ctx> {
     None,
     Break(Option<Spanned<String>>),
     Continue(Option<Spanned<String>>),
-    Eval {
-        name: Option<Spanned<String>>,
-        value: Spanned<ValueEnum<'ctx>>,
-    },
+    Eval(Option<Spanned<String>>, Spanned<ValueEnum<'ctx>>),
+    Value(Spanned<ValueEnum<'ctx>>),
     Return(Spanned<ValueEnum<'ctx>>),
 }
 
@@ -380,6 +378,10 @@ fn gen_if<'ctx>(
             if if_returns.is_none() {
                 ctx.builder.build_unconditional_branch(continued_block);
                 ctx.builder.position_at_end(continued_block);
+            }
+
+            if if_returns.is_eval() {
+                if_returns = StmtEval::Value(if_returns.try_as_eval().unwrap().1);
             }
 
             Ok(if_returns)

@@ -273,7 +273,7 @@ pub fn literal<'src>() -> impl GenericParser<'src, Spanned<ParseLiteral>> + Clon
         .spanned()
         .labelled("number");
     let float = text::int(10)
-        .then(just('.').padded().ignore_then(text::int(10)))
+        .then(just('.').padded().ignore_then(text::digits(10).to_slice()))
         .map(|(int, frac)| match format!("{}.{}", int, frac).parse() {
             Ok(float) => ParseLiteral::Float(float),
             Err(_) => ParseLiteral::Error(ErrorKind::Unknown),
@@ -479,27 +479,30 @@ pub fn justexpr<'src>()
 pub fn expr<'src>(
     block: impl GenericParser<'src, Vec<Spanned<Stmt>>> + Clone + 'src,
 ) -> impl GenericParser<'src, Spanned<Expr>> + Clone {
-    choice((
-        justexpr(),
-        var(block.clone()).map(Expr::Var).spanned(),
-        set(block.clone()).map(Expr::Set).spanned(),
-        if_parser(block.clone())
-            .map(|x| Expr::If(Box::new(x)))
-            .spanned(),
-        for_parser(block.clone())
-            .map(|x| Expr::For(Box::new(x)))
-            .spanned(),
-        match_parser(block.clone())
-            .map(|x| Expr::Match(Box::new(x)))
-            .spanned(),
-        while_parser(block.clone())
-            .map(|x| Expr::While(Box::new(x)))
-            .spanned(),
-    ))
-    .boxed() // istgtspmo rst s vbcd
+    recursive(|expr| {
+        choice((
+            justexpr(),
+            var(expr.clone(), block.clone()).map(Expr::Var).spanned(),
+            set(expr.clone(), block.clone()).map(Expr::Set).spanned(),
+            if_parser(expr.clone(), block.clone())
+                .map(|x| Expr::If(Box::new(x)))
+                .spanned(),
+            for_parser(expr.clone(), block.clone())
+                .map(|x| Expr::For(Box::new(x)))
+                .spanned(),
+            match_parser(expr.clone(), block.clone())
+                .map(|x| Expr::Match(Box::new(x)))
+                .spanned(),
+            while_parser(expr.clone(), block.clone())
+                .map(|x| Expr::While(Box::new(x)))
+                .spanned(),
+        ))
+        .boxed()
+    }) // istgtspmo rst s vbcd)
 }
 
 pub fn var<'src>(
+    expr: impl GenericParser<'src, Spanned<Expr>> + Clone + 'src,
     block: impl GenericParser<'src, Vec<Spanned<Stmt>>> + Clone + 'src,
 ) -> impl GenericParser<'src, Var> + Clone {
     let ident = text::ascii::ident().spanned();
@@ -509,7 +512,7 @@ pub fn var<'src>(
         .ignore_then(ident)
         .then(just(':').padded().ignore_then(type_parser()).or_not())
         .then_ignore(just("=").padded())
-        .then(expr(block))
+        .then(expr)
         .then_ignore(just(";"))
         .map(|((name, typ), value)| Var {
             name: name.span.make_wrapped(name.to_string()),
@@ -520,14 +523,15 @@ pub fn var<'src>(
 }
 
 pub fn set<'src>(
+    expr: impl GenericParser<'src, Spanned<Expr>> + Clone + 'src,
     block: impl GenericParser<'src, Vec<Spanned<Stmt>>> + Clone + 'src,
 ) -> impl GenericParser<'src, Set> + Clone {
-    primary(expr(block.clone()))
+    primary(expr.clone())
         .labelled("var set")
         .padded()
         .spanned()
         .then_ignore(just("="))
-        .then(expr(block))
+        .then(expr)
         .map(|(on, value)| Set {
             on: on.span.make_wrapped(on.inner.inner),
             value: value.span.make_wrapped(Box::new(value.inner)),
@@ -536,17 +540,18 @@ pub fn set<'src>(
 }
 
 pub fn if_parser<'src>(
+    expr: impl GenericParser<'src, Spanned<Expr>> + Clone,
     block: impl GenericParser<'src, Vec<Spanned<Stmt>>> + Clone + 'src,
 ) -> impl GenericParser<'src, If> + Clone {
     text::keyword("if")
         .padded()
         .ignore_then(stmt_name())
-        .then(expr(block.clone()))
+        .then(expr.clone())
         .then(block.clone())
         .then(
             keyword("elif")
                 .ignore_then(stmt_name())
-                .then(expr(block.clone()))
+                .then(expr)
                 .then(block.clone())
                 .map(|((name, condition), body)| (name, condition, body))
                 .repeated()
@@ -563,6 +568,7 @@ pub fn if_parser<'src>(
 }
 
 pub fn for_parser<'src>(
+    expr: impl GenericParser<'src, Spanned<Expr>> + Clone + 'src,
     block: impl GenericParser<'src, Vec<Spanned<Stmt>>> + Clone + 'src,
 ) -> impl GenericParser<'src, For> + Clone {
     keyword("for")
@@ -570,7 +576,7 @@ pub fn for_parser<'src>(
         .ignore_then(stmt_name())
         .then(ident().spanned().padded())
         .then_ignore(keyword("in"))
-        .then(expr(block.clone()))
+        .then(expr)
         .then(block.clone())
         .map(|(((name, looper), loopee), block)| For {
             name,
@@ -581,16 +587,17 @@ pub fn for_parser<'src>(
 }
 
 pub fn match_parser<'src>(
+    expr: impl GenericParser<'src, Spanned<Expr>> + Clone + 'src,
     block: impl GenericParser<'src, Vec<Spanned<Stmt>>> + Clone + 'src,
 ) -> impl GenericParser<'src, Match> + Clone {
     keyword("match")
         .padded()
         .ignore_then(stmt_name())
-        .then(expr(block.clone()))
+        .then(expr.clone())
         .then(
-            primary(expr(block.clone()))
+            primary(expr.clone())
                 .then_ignore(just("->").padded())
-                .then(expr(block.clone()))
+                .then(expr)
                 .then_ignore(just(";").padded())
                 .repeated()
                 .collect::<Vec<_>>()
@@ -604,12 +611,13 @@ pub fn match_parser<'src>(
 }
 
 pub fn while_parser<'src>(
+    expr: impl GenericParser<'src, Spanned<Expr>> + Clone + 'src,
     block: impl GenericParser<'src, Vec<Spanned<Stmt>>> + Clone + 'src,
 ) -> impl GenericParser<'src, While> + Clone {
     text::keyword("while")
         .padded()
         .ignore_then(stmt_name())
-        .then(expr(block.clone()))
+        .then(expr)
         .then(block.clone())
         .map(|((name, condition), block)| While {
             name,
@@ -624,13 +632,11 @@ pub fn stmt<'src>(
     let break_stmt = keyword("break")
         .padded()
         .ignore_then(stmt_name())
-        .then_ignore(just(";").padded())
         .map(|name| Stmt::Break(Break(name)));
 
     let continue_stmt = keyword("continue")
         .padded()
         .ignore_then(stmt_name())
-        .then_ignore(just(";").padded())
         .map(|name| Stmt::Continue(Continue(name)));
 
     let eval = text::keyword("eval")
@@ -638,7 +644,6 @@ pub fn stmt<'src>(
         .ignore_then(stmt_name())
         .then(expr(block.clone()).or_not())
         .spanned()
-        .then_ignore(just(";").padded())
         .map(
             |Spanned {
                  inner: (from, val),
@@ -655,7 +660,6 @@ pub fn stmt<'src>(
         .padded()
         .ignore_then(expr(block.clone()).or_not())
         .spanned()
-        .then_ignore(just(";").padded())
         .map(|expr| match expr.inner {
             Some(inner) => Stmt::Return(Return(
                 expr.span
@@ -664,16 +668,16 @@ pub fn stmt<'src>(
             None => Stmt::Return(Return(expr.span.make_wrapped(None))),
         });
 
-    let var_stmt = var(block.clone()).map(Stmt::Var);
-    let set_stmt = set(block.clone()).map(Stmt::Set);
-    let if_stmt = if_parser(block.clone()).map(Stmt::If);
-    let for_stmt = for_parser(block.clone()).map(Stmt::For);
-    let match_stmt = match_parser(block.clone()).map(Stmt::Match);
-    let while_stmt = while_parser(block.clone()).map(Stmt::While);
+    let expr = expr(block.clone());
+    let var_stmt = var(expr.clone(), block.clone()).map(Stmt::Var);
+    let set_stmt = set(expr.clone(), block.clone()).map(Stmt::Set);
+    let if_stmt = if_parser(expr.clone(), block.clone()).map(Stmt::If);
+    let for_stmt = for_parser(expr.clone(), block.clone()).map(Stmt::For);
+    let match_stmt = match_parser(expr.clone(), block.clone()).map(Stmt::Match);
+    let while_stmt = while_parser(expr.clone(), block.clone()).map(Stmt::While);
 
-    let just_expr = expr(block.clone())
-        .then_ignore(just(";").padded())
-        .map(|expression| Stmt::Expr(expression.span.make_wrapped(Box::new(expression.inner))));
+    let just_expr =
+        expr.map(|expression| Stmt::Expr(expression.span.make_wrapped(Box::new(expression.inner))));
 
     let recovery = via_parser(
         none_of(";}")
@@ -684,13 +688,13 @@ pub fn stmt<'src>(
     );
 
     choice((
-        just_expr,
         var_stmt,
-        set_stmt,
         break_stmt,
         continue_stmt,
         eval,
         ret,
+        set_stmt,
+        just_expr,
     ))
     .then_ignore(just(";").padded())
     .or(choice((if_stmt, for_stmt, match_stmt, while_stmt)))
@@ -727,7 +731,7 @@ pub fn params<'src>()
 
 pub fn decl<'src>() -> impl Parser<'src, &'src str, Decl, extra::Err<Rich<'src, char>>> + Clone {
     recursive(|decl| {
-        let var = var(block()).map(Decl::Var);
+        let var = var(expr(block()), block()).map(Decl::Var);
         let function = text::keyword("fn")
             .padded()
             .ignore_then(text::ident().spanned().padded()) // TODO: Function generic params.
