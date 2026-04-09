@@ -135,7 +135,7 @@ fn gen_atom<'ctx>(
             Ok(ValueEnum::Vector(vec))
         }
         Atom::Block(stmts) => match gen_stmts(ctx, stmts, info, into_name)? {
-            StmtEval::Eval { name, value } => {
+            StmtEval::Eval { 0: name, 1: value } => {
                 if name.is_some() {
                     return Err(CompileError::new(
                         name.unwrap().span,
@@ -223,12 +223,15 @@ fn gen_primary_ref<'ctx>(
     into_name: &str,
 ) -> Result<ValueRef<'ctx>, CompileError> {
     match prim {
-        Primary::Atom(atom) => Err(CompileError::with_notes(
-            atom.span,
-            "Cannot get a reference to an Atom.",
-            atom.span,
-            "You are probably trying to set to a non-field value (e.g. 1 = 2, or [1, 2] = 5), which is invalid.",
-        )),
+        Primary::Atom(atom) => match atom.inner.as_ref() {
+            _ => Err(CompileError::with_notes(
+                atom.span,
+                "Cannot get a reference to this value.",
+                atom.span,
+                "You are probably trying to set to a non-field value (e.g. 1 = 2, [1, 2] = 5, {eval x;} = 5) which is invalid.",
+            )),
+            Atom::Var(ident) => todo!("This is not a reference, it's resetting the field."),
+        },
         Primary::Call { on, generics, args } => Err(CompileError::with_notes(
             on.span,
             "Cannot get a reference to the field returned by a function call.",
@@ -286,7 +289,17 @@ fn gen_expr<'ctx>(
         Expr::Primary(primary) => gen_primary(ctx, info, primary, &into_name),
         Expr::Var(var) => todo!(),
         Expr::Set(set) => todo!(),
-        Expr::If(_) => todo!(),
+        Expr::If(if_stmt) => {
+            let if_eval = gen_if(ctx, info, if_stmt, into_name)?;
+            if if_eval.is_value() {
+                Ok(if_eval.try_as_value().unwrap().inner)
+            } else {
+                Err(CompileError::new(
+                    if_stmt.condition.span,
+                    "If stmt must evaluate on all code paths.",
+                ))
+            }
+        }
         Expr::For(_) => todo!(),
         Expr::Match(_) => todo!(),
         Expr::While(_) => todo!(),
@@ -306,88 +319,85 @@ fn gen_match<'ctx>(
 fn gen_if<'ctx>(
     ctx: &mut LanguageContext<'ctx>,
     info: &FunctionInfo<'ctx>,
-    stmt: &Stmt,
+    If {
+        name,
+        condition,
+        then,
+        elifs,
+        else_block,
+    }: &If,
     into_name: &str,
 ) -> Result<StmtEval<'ctx>, CompileError> {
-    match stmt {
-        Stmt::If(If {
-            condition,
-            then,
-            elifs,
-            else_block,
-            name,
-        }) => {
-            let truthy_block = ctx.context.append_basic_block(info.function, "truthy");
-            let falsey_block = ctx.context.append_basic_block(info.function, "falsey");
-            let continued_block = ctx.context.append_basic_block(info.function, "continue");
+    let truthy_block = ctx.context.append_basic_block(info.function, "truthy");
+    let falsey_block = ctx.context.append_basic_block(info.function, "falsey");
+    let continued_block = ctx.context.append_basic_block(info.function, "continue");
 
-            let cond_eval = gen_expr(ctx, info, condition, "while_condition")?;
-            if cond_eval.get_type(ctx) != TypeID::from_base("Bool") {
-                return Err(CompileError::new(
-                    condition.span,
-                    &format!(
-                        "Expression must evaluate to type `Bool` in an `if` statement, instead it evaluates to type `{}`.",
-                        cond_eval.get_type(ctx)
-                    ),
-                ));
-            }
-            ctx.builder.build_conditional_branch(
-                cond_eval.get_value().into_int_value(),
-                truthy_block,
-                falsey_block,
-            );
-
-            ctx.builder.position_at_end(truthy_block);
-            let mut if_returns = gen_stmts(ctx, then, info, into_name)?;
-            if if_returns.is_none() {
-                ctx.builder.build_unconditional_branch(continued_block);
-            }
-
-            ctx.builder.position_at_end(falsey_block);
-
-            let mut elifs = elifs.clone();
-
-            if elifs.len() > 0 {
-                let (name, cond, then) = elifs.remove(0);
-                let elif_returns = gen_if(
-                    ctx,
-                    info,
-                    &Stmt::If(If {
-                        condition: cond,
-                        then,
-                        elifs: elifs.clone(),
-                        else_block: else_block.clone(),
-                        name,
-                    }),
-                    into_name,
-                )?;
-                if_returns = if if_returns.is_return() {
-                    elif_returns
-                } else {
-                    StmtEval::None
-                };
-            } else if else_block.is_some() {
-                let else_returns = gen_stmts(ctx, else_block.as_ref().unwrap(), info, into_name)?;
-                if_returns = if if_returns.is_return() {
-                    else_returns
-                } else {
-                    StmtEval::None
-                }
-            }
-
-            if if_returns.is_none() {
-                ctx.builder.build_unconditional_branch(continued_block);
-                ctx.builder.position_at_end(continued_block);
-            }
-
-            if if_returns.is_eval() {
-                if_returns = StmtEval::Value(if_returns.try_as_eval().unwrap().1);
-            }
-
-            Ok(if_returns)
-        }
-        _ => panic!(),
+    let cond_eval = gen_expr(ctx, info, condition, "while_condition")?;
+    if cond_eval.get_type(ctx) != TypeID::from_base("Bool") {
+        return Err(CompileError::new(
+            condition.span,
+            &format!(
+                "Expression must evaluate to type `Bool` in an `if` statement, instead it evaluates to type `{}`.",
+                cond_eval.get_type(ctx)
+            ),
+        ));
     }
+    ctx.builder.build_conditional_branch(
+        cond_eval.get_value().into_int_value(),
+        truthy_block,
+        falsey_block,
+    );
+
+    ctx.builder.position_at_end(truthy_block);
+    let mut if_returns = gen_stmts(ctx, then, info, into_name)?;
+    if !if_returns.is_return() {
+        ctx.builder.build_unconditional_branch(continued_block);
+    }
+
+    ctx.builder.position_at_end(falsey_block);
+
+    let mut elifs = elifs.clone();
+
+    if elifs.len() > 0 {
+        let (name, cond, then) = elifs.remove(0);
+        let elif_returns = gen_if(
+            ctx,
+            info,
+            &If {
+                condition: cond,
+                then,
+                elifs: elifs.clone(),
+                else_block: else_block.clone(),
+                name,
+            },
+            into_name,
+        )?;
+        if_returns = if matches!(if_returns, elif_returns) {
+            elif_returns
+        } else {
+            StmtEval::None
+        };
+    } else if else_block.is_some() {
+        let else_returns = gen_stmts(ctx, else_block.as_ref().unwrap(), info, into_name)?;
+        if_returns = if matches!(if_returns, else_returns) {
+            else_returns
+        } else {
+            StmtEval::None
+        }
+    } else {
+        if_returns = StmtEval::None
+    }
+
+    if !if_returns.is_return() {
+        ctx.builder.build_unconditional_branch(continued_block);
+        ctx.builder.position_at_end(continued_block);
+    }
+
+    if if_returns.is_eval() {
+        if_returns = StmtEval::Value(if_returns.try_as_eval().unwrap().1);
+    }
+
+    Ok(if_returns)
 }
 
 fn gen_var_decl<'ctx>(
@@ -556,13 +566,7 @@ fn gen_stmt<'ctx>(
 
             Ok(returns)
         }
-        Stmt::If(If {
-            condition,
-            then,
-            elifs,
-            else_block,
-            name,
-        }) => gen_if(ctx, info, stmt, into_name),
+        Stmt::If(stmt) => gen_if(ctx, info, stmt, into_name),
         Stmt::Match(stmt) => gen_match(ctx, info, stmt, into_name),
         Stmt::Return(Return { 0: expr }) => match &expr.inner {
             Some(expr) => Ok(StmtEval::Return(expr.span.make_wrapped(gen_expr(
@@ -576,8 +580,8 @@ fn gen_stmt<'ctx>(
             )),
         },
         Stmt::Eval(Eval { from: name, val }) => Ok(StmtEval::Eval {
-            name: name.clone(),
-            value: match &val.inner {
+            0: name.clone(),
+            1: match &val.inner {
                 Some(val) => val
                     .span
                     .make_wrapped(gen_expr(ctx, info, &val.inner, into_name)?),
@@ -621,6 +625,7 @@ fn gen_stmts<'ctx>(
                 ctx.builder.build_return(ret_value);
                 return Ok(eval);
             }
+            StmtEval::Value(..) => continue,
             StmtEval::None => continue,
             _ => {
                 return Ok(eval);

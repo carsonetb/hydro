@@ -481,9 +481,6 @@ pub fn expr<'src>(
 ) -> impl GenericParser<'src, Spanned<Expr>> + Clone {
     recursive(|expr| {
         choice((
-            justexpr(),
-            var(expr.clone(), block.clone()).map(Expr::Var).spanned(),
-            set(expr.clone(), block.clone()).map(Expr::Set).spanned(),
             if_parser(expr.clone(), block.clone())
                 .map(|x| Expr::If(Box::new(x)))
                 .spanned(),
@@ -496,6 +493,7 @@ pub fn expr<'src>(
             while_parser(expr.clone(), block.clone())
                 .map(|x| Expr::While(Box::new(x)))
                 .spanned(),
+            justexpr(),
         ))
         .boxed()
     }) // istgtspmo rst s vbcd)
@@ -513,7 +511,6 @@ pub fn var<'src>(
         .then(just(':').padded().ignore_then(type_parser()).or_not())
         .then_ignore(just("=").padded())
         .then(expr)
-        .then_ignore(just(";"))
         .map(|((name, typ), value)| Var {
             name: name.span.make_wrapped(name.to_string()),
             typ: typ,
