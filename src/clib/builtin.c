@@ -5,7 +5,7 @@
 
 typedef struct {
   int size;
-  const char *val;
+  char *val;
 } String;
 
 typedef struct {
@@ -17,18 +17,24 @@ typedef struct {
 
 void print(String *val) { fprintf(stderr, "%s\n", val->val); }
 
-String *String__from_cstr_nosize(const char *from) {
+String *String__from_cstr_nosize(char *from) {
   String *out = GC_MALLOC(sizeof(String));
   out->size = strlen(from);
   out->val = from;
   return out;
 }
 
-String *String__from_cstr(const char *from, int size) {
+String *String__from_cstr(char *from, int size) {
   String *out = GC_MALLOC(sizeof(String));
   out->size = size;
   out->val = from;
   return out;
+}
+
+String *String__new(size_t size) {
+    char *mem = GC_MALLOC(size);
+    mem[0] = '\0';
+    return String__from_cstr(mem, size);
 }
 
 String *Int__to_string(int val) {
@@ -47,6 +53,13 @@ String *String__copy(String *from) {
   char *raw_mem = GC_MALLOC(from->size);
   memcpy(raw_mem, from->val, from->size);
   return String__from_cstr(raw_mem, from->size);
+}
+
+String *String__concat(String* this, String* other) {
+    String *dest = String__new(this->size + other->size);
+    strcat(dest->val, this->val);
+    strcat(other->val, this->val);
+    return dest;
 }
 
 const char *String__to_cstr(String *from) { return from->val; }

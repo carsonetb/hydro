@@ -62,6 +62,10 @@ pub trait Callable<'ctx> {
     }
 }
 
+pub fn function_type(args: Vec<TypeID>, returns: TypeID) -> TypeID {
+    TypeID::new("Function", vec![TypeID::new("Tuple", args), returns])
+}
+
 #[derive(Clone, Debug)]
 pub struct Function<'ctx> {
     name: String,

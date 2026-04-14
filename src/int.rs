@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use crate::{
-    callable::{Function, MemberFunction},
+    callable::{Function, MemberFunction, function_type},
     codegen::CompileError,
     context::{LLVMTypes, LanguageContext},
     types::{BasicBuiltin, MetatypeBuilder, TypeID},
@@ -218,20 +218,8 @@ impl<'ctx> ValueStatic<'ctx> for Int<'ctx> {
             false,
         );
 
-        let bin_type = TypeID::new(
-            "Function",
-            vec![
-                TypeID::new("Tuple", vec![typeid.clone(); 2]),
-                typeid.clone(),
-            ],
-        );
-        let cmp_type = TypeID::new(
-            "Function",
-            vec![
-                TypeID::new("Tuple", vec![typeid.clone(); 2]),
-                TypeID::from_base("Bool"),
-            ],
-        );
+        let bin_type = function_type(vec![typeid.clone(); 2], typeid.clone());
+        let cmp_type = function_type(vec![typeid.clone(); 2], TypeID::from_base("Bool"));
         let add_llvm_fn = build_binop!("+", build_int_add);
         let sub_llvm_fn = build_binop!("-", build_int_sub);
         let mul_llvm_fn = build_binop!("*", build_int_mul);

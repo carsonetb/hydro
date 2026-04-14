@@ -1,4 +1,6 @@
+
 fn main() {
+    print("x" + "y");
     var text = if 1.05 == 1.04 {
         eval "true";
     } elif 1.05 == 1.05 {

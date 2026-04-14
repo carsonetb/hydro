@@ -60,11 +60,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     ctx.builder.build_return(Some(&ctx.int(0))).unwrap();
 
     main_val.verify(true);
-    //ctx.module.print_to_stderr();
+    ctx.module.print_to_file("bin/ir.txt");
     if ctx.module.verify().is_err() {
-        ctx.module.print_to_stderr();
         println!(
-            "There was an error with the generated LLVM IR. It was printed above for debugging."
+            "There was an error with the generated LLVM IR. It will be logged to ir.txt in the bin directory."
         );
         ctx.module.verify().unwrap();
     }

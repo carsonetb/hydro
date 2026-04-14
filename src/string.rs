@@ -7,6 +7,7 @@ use inkwell::{
 };
 
 use crate::{
+    callable::{Function, function_type},
     codegen::CompileError,
     context::LanguageContext,
     types::{BasicBuiltin, MetatypeBuilder, TypeID},
@@ -55,10 +56,25 @@ impl<'ctx> Value<'ctx> for Str<'ctx> {
         name: Spanned<String>,
         into: &str,
     ) -> Result<ValueEnum<'ctx>, CompileError> {
-        Err(CompileError::new(
-            name.span,
-            &format!("`String` has no member {}", name.inner),
-        ))
+        match &name.inner[..] {
+            "+" => Ok(ValueEnum::Function(Function::new(
+                ctx,
+                ctx.module
+                    .get_function("String__concat")
+                    .unwrap()
+                    .as_global_value()
+                    .as_pointer_value(),
+                function_type(
+                    vec![TypeID::from_base("String"); 2],
+                    TypeID::from_base("String"),
+                ),
+                "+",
+            ))),
+            _ => Err(CompileError::new(
+                name.span,
+                &format!("`String` has no member {}", name.inner),
+            )),
+        }
     }
 
     fn member_ref(
@@ -112,6 +128,12 @@ impl<'ctx> ValueStatic<'ctx> for Str<'ctx> {
             ctx.types.ptr.as_any_type_enum(),
             false,
         );
+
+        let concat_type = function_type(vec![typeid.clone(); 2], typeid.clone());
+        let concat_llvm_fn = ctx.module.get_function("String__concat").unwrap();
+        let concat_fn = Function::from_function(llvm_ctx, ctx, concat_llvm_fn, concat_type);
+        builder.add_static("+", ValueEnum::Function(concat_fn));
+
         builder.build(llvm_ctx, ctx, generics);
     }
 }

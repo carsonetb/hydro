@@ -71,7 +71,6 @@ pub enum StmtEval<'ctx> {
     Break(Option<Spanned<String>>),
     Continue(Option<Spanned<String>>),
     Eval(Option<Spanned<String>>, Spanned<ValueEnum<'ctx>>),
-    Value(Spanned<ValueEnum<'ctx>>),
     Return(Spanned<ValueEnum<'ctx>>),
 }
 
@@ -292,8 +291,8 @@ fn gen_expr<'ctx>(
         Expr::Set(set) => todo!(),
         Expr::If(if_stmt) => {
             let if_eval = gen_if(ctx, info, if_stmt, into_name)?;
-            if if_eval.is_value() {
-                Ok(if_eval.try_as_value().unwrap().inner)
+            if if_eval.is_eval() {
+                Ok(if_eval.try_as_eval().unwrap().1.inner)
             } else {
                 Err(CompileError::new(
                     if_stmt.condition.span,
@@ -436,7 +435,7 @@ fn gen_if<'ctx>(
                 ctx,
                 &mut eval_mem,
                 prev_block,
-                falsey_block,
+                ctx.builder.get_insert_block().unwrap(),
                 continued_block,
                 &if_returns.clone().try_as_eval().unwrap().1.inner,
             )
@@ -468,7 +467,7 @@ fn gen_if<'ctx>(
     }
 
     if if_returns.is_eval() {
-        let (_, value) = if_returns.try_as_eval().unwrap();
+        let (name, value) = if_returns.try_as_eval().unwrap();
         let loaded = ctx
             .builder
             .build_load(
@@ -478,8 +477,8 @@ fn gen_if<'ctx>(
             )
             .unwrap();
         let span = value.span;
-        let value = ValueEnum::from_val(ctx, loaded, value.get_type(ctx), into_name);
-        if_returns = StmtEval::Value(span.make_wrapped(value));
+        let loaded_wrapped = ValueEnum::from_val(ctx, loaded, value.get_type(ctx), into_name);
+        if_returns = StmtEval::Eval(name, value.span.make_wrapped(loaded_wrapped));
     }
 
     Ok(if_returns)
@@ -710,7 +709,6 @@ fn gen_stmts<'ctx>(
                 ctx.builder.build_return(ret_value);
                 return Ok(eval);
             }
-            StmtEval::Value(..) => continue,
             StmtEval::None => continue,
             _ => {
                 return Ok(eval);
