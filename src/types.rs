@@ -8,7 +8,7 @@ use inkwell::{
 };
 
 use crate::{
-    callable::Function,
+    callable::{Function, function_type},
     classes::{ClassInfo, ClassMember},
     codegen::CompileError,
     context::LanguageContext,
@@ -334,5 +334,36 @@ impl<'ctx> MetatypeBuilder<'ctx> {
 
         ctx.metatypes.insert(self.id.clone(), Some(out.clone()));
         ctx.add_field(&name, Field::new(ValueEnum::Type(out), &name));
+    }
+}
+
+/// ClassBuilder is a wrapper for MetatypeBuilder designed to asset in building
+/// specifically user created classes (of base BasicBuiltin::Class).
+pub struct ClassBuilder<'ctx> {
+    class_struct: StructType<'ctx>,
+    members: BTreeMap<String, ClassMember>,
+    functions: BTreeMap<String, Function<'ctx>>,
+    initializer: FunctionValue<'ctx>,
+}
+
+impl<'ctx> ClassBuilder<'ctx> {
+    pub fn new(
+        ctx: &mut LanguageContext<'ctx>,
+        name: &str,
+        params: &Vec<(String, TypeID)>,
+    ) -> Self {
+        let init_llvm_type = ctx.types.ptr.fn_type(
+            params
+                .iter()
+                .map(|(_, typ)| any_to_basic(ctx.get(typ.clone()).storage_type))
+                .collect(),
+            is_var_args,
+        );
+        let init_llvm_fn = ctx.add_function(&format("User__{}.()", name), init_llvm_type);
+        let init_type = function_type(
+            params.iter().map(|(name, typ)| typ).collect(),
+            TypeID::from_base(name),
+        );
+        let init_fn = Function::from_function(ctx.context, ctx, init_llvm_fn, init_type);
     }
 }
