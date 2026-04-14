@@ -1,6 +1,10 @@
 fn main() {
-    var text = if 1.05 == 1.05 {
+    var text = if 1.05 == 1.04 {
         eval "true";
-    } else { eval "false"; };
+    } elif 1.05 == 1.05 {
+        eval "false";
+    } else {
+        eval "none";
+    };
     print(text);
 }

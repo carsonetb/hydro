@@ -9,6 +9,7 @@ use std::{
 use ariadne::{Color, Label, Report, ReportKind, Source};
 use chumsky::span::{SimpleSpan, Spanned, WrappingSpan};
 use inkwell::{
+    basic_block::BasicBlock,
     context::Context,
     module::Linkage,
     types::{AnyType, BasicMetadataTypeEnum, BasicType, BasicTypeEnum, FunctionType, StructType},
@@ -64,7 +65,7 @@ impl CompileError {
     }
 }
 
-#[derive(Debug, EnumIs, EnumTryAs)]
+#[derive(Debug, Clone, EnumIs, EnumTryAs)]
 pub enum StmtEval<'ctx> {
     None,
     Break(Option<Spanned<String>>),
@@ -316,6 +317,35 @@ fn gen_match<'ctx>(
     todo!()
 }
 
+fn lift_eval<'ctx>(
+    ctx: &mut LanguageContext<'ctx>,
+    mem: &mut Option<PointerValue<'ctx>>,
+    prev_block: BasicBlock<'ctx>,
+    current_block: BasicBlock<'ctx>,
+    continued_block: BasicBlock<'ctx>,
+    value: &ValueEnum<'ctx>,
+) -> Option<PointerValue<'ctx>> {
+    if value.is_unit() {
+        return None;
+    }
+    match prev_block.get_first_instruction() {
+        Some(inst) => ctx.builder.position_before(&inst),
+        None => ctx.builder.position_at_end(prev_block),
+    }
+    let out = if mem.is_none() {
+        Some(
+            ctx.builder
+                .build_alloca(ctx.get_storage(value.get_type(ctx)), "if_eval_ptr")
+                .unwrap(),
+        )
+    } else {
+        *mem
+    };
+    ctx.builder.position_at_end(current_block);
+    ctx.builder.build_store(out.unwrap(), value.get_value());
+    out
+}
+
 fn gen_if<'ctx>(
     ctx: &mut LanguageContext<'ctx>,
     info: &FunctionInfo<'ctx>,
@@ -342,16 +372,40 @@ fn gen_if<'ctx>(
             ),
         ));
     }
-    ctx.builder.build_conditional_branch(
-        cond_eval.get_value().into_int_value(),
-        truthy_block,
-        falsey_block,
-    );
+    ctx.builder
+        .build_conditional_branch(
+            cond_eval.get_value().into_int_value(),
+            truthy_block,
+            falsey_block,
+        )
+        .unwrap();
 
+    let prev_block = ctx.builder.get_insert_block().unwrap();
     ctx.builder.position_at_end(truthy_block);
     let mut if_returns = gen_stmts(ctx, then, info, into_name)?;
-    if !if_returns.is_return() {
-        ctx.builder.build_unconditional_branch(continued_block);
+
+    let mut eval_mem: Option<PointerValue<'ctx>> = None;
+
+    match &if_returns {
+        StmtEval::Eval(_, Spanned { inner: value, span }) => {
+            eval_mem = lift_eval(
+                ctx,
+                &mut eval_mem,
+                prev_block,
+                truthy_block,
+                continued_block,
+                value,
+            );
+            ctx.builder
+                .build_unconditional_branch(continued_block)
+                .unwrap();
+        }
+        StmtEval::Return(spanned) => (),
+        _ => {
+            ctx.builder
+                .build_unconditional_branch(continued_block)
+                .unwrap();
+        }
     }
 
     ctx.builder.position_at_end(falsey_block);
@@ -377,13 +431,33 @@ fn gen_if<'ctx>(
         } else {
             StmtEval::None
         };
+        if if_returns.is_eval() {
+            eval_mem = lift_eval(
+                ctx,
+                &mut eval_mem,
+                prev_block,
+                falsey_block,
+                continued_block,
+                &if_returns.clone().try_as_eval().unwrap().1.inner,
+            )
+        };
     } else if else_block.is_some() {
         let else_returns = gen_stmts(ctx, else_block.as_ref().unwrap(), info, into_name)?;
         if_returns = if matches!(if_returns, else_returns) {
             else_returns
         } else {
             StmtEval::None
-        }
+        };
+        if if_returns.is_eval() {
+            eval_mem = lift_eval(
+                ctx,
+                &mut eval_mem,
+                prev_block,
+                falsey_block,
+                continued_block,
+                &if_returns.clone().try_as_eval().unwrap().1.inner,
+            )
+        };
     } else {
         if_returns = StmtEval::None
     }
@@ -394,7 +468,18 @@ fn gen_if<'ctx>(
     }
 
     if if_returns.is_eval() {
-        if_returns = StmtEval::Value(if_returns.try_as_eval().unwrap().1);
+        let (_, value) = if_returns.try_as_eval().unwrap();
+        let loaded = ctx
+            .builder
+            .build_load(
+                ctx.get_storage(value.inner.get_type(ctx)),
+                eval_mem.unwrap(),
+                into_name,
+            )
+            .unwrap();
+        let span = value.span;
+        let value = ValueEnum::from_val(ctx, loaded, value.get_type(ctx), into_name);
+        if_returns = StmtEval::Value(span.make_wrapped(value));
     }
 
     Ok(if_returns)
