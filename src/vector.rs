@@ -132,7 +132,7 @@ impl<'ctx> Vector<'ctx> {
 impl<'ctx> Value<'ctx> for Vector<'ctx> {
     fn member(
         &self,
-        ctx: &LanguageContext<'ctx>,
+        ctx: &mut LanguageContext<'ctx>,
         name: Spanned<String>,
         into: &str,
     ) -> Result<ValueEnum<'ctx>, CompileError> {
@@ -191,7 +191,7 @@ impl<'ctx> Value<'ctx> for Vector<'ctx> {
         ))
     }
 
-    fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeID {
+    fn get_type(&self) -> TypeID {
         self.metatype.clone()
     }
 

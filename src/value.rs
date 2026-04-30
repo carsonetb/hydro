@@ -116,7 +116,7 @@ impl<'ctx> ValueEnum<'ctx> {
 pub trait Value<'ctx> {
     fn member(
         &self,
-        ctx: &LanguageContext<'ctx>,
+        ctx: &mut LanguageContext<'ctx>,
         name: Spanned<String>,
         into: &str,
     ) -> Result<ValueEnum<'ctx>, CompileError>;
@@ -126,7 +126,7 @@ pub trait Value<'ctx> {
         name: Spanned<String>,
         into: &str,
     ) -> Result<ValueRef<'ctx>, CompileError>;
-    fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeID;
+    fn get_type(&self) -> TypeID;
     fn get_value(&self) -> BasicValueEnum<'ctx>;
     fn construct_ptr(&self, ctx: &LanguageContext<'ctx>, into_name: &str) -> PointerValue<'ctx>;
 }

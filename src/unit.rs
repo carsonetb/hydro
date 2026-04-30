@@ -17,7 +17,7 @@ pub struct Unit {}
 impl<'ctx> Value<'ctx> for Unit {
     fn member(
         &self,
-        _ctx: &LanguageContext<'ctx>,
+        _ctx: &mut LanguageContext<'ctx>,
         _name: Spanned<String>,
         _into: &str,
     ) -> Result<ValueEnum<'ctx>, CompileError> {
@@ -33,7 +33,7 @@ impl<'ctx> Value<'ctx> for Unit {
         panic!()
     }
 
-    fn get_type(&self, _ctx: &LanguageContext<'ctx>) -> TypeID {
+    fn get_type(&self) -> TypeID {
         TypeID::from_base("Unit")
     }
 

@@ -40,7 +40,7 @@ pub trait Callable<'ctx> {
             .collect();
         let params: Vec<BasicMetadataTypeEnum<'ctx>> = args
             .into_iter()
-            .map(|a| ctx.get_storage(a.get_type(ctx)).into())
+            .map(|a| ctx.get_storage(a.get_type()).into())
             .collect();
         let fn_type = ctx.get_storage(self.returns()).fn_type(&params, false);
         let result = ctx
@@ -105,7 +105,7 @@ impl<'ctx> Function<'ctx> {
 
     pub fn to_member_function(
         &self,
-        ctx: &LanguageContext<'ctx>,
+        ctx: &mut LanguageContext<'ctx>,
         bound: BasicValueEnum<'ctx>,
         name: &str,
     ) -> MemberFunction<'ctx> {
@@ -117,7 +117,11 @@ impl<'ctx> Function<'ctx> {
                 self.returns(),
             ],
         );
-        let fn_struct = ctx.get_struct(typ.clone()).get_undef();
+        let fn_struct = ctx
+            .get_with_gen_ext(typ.clone())
+            .obj_struct
+            .unwrap()
+            .get_undef();
         let fn_struct = ctx
             .builder
             .build_insert_value(fn_struct, bound, 0, &format!("{name}_bound"))
@@ -141,7 +145,7 @@ impl<'ctx> Callable<'ctx> for Function<'ctx> {
         args: Vec<ValueEnum<'ctx>>,
         into_name: &str,
     ) -> Result<ValueEnum<'ctx>, String> {
-        if !self.verify(args.iter().map(|arg| arg.get_type(ctx)).collect()) {
+        if !self.verify(args.iter().map(|arg| arg.get_type()).collect()) {
             return Err("Arguments to this function are incorrect.".to_string()); // TODO: Improve this error.
         }
 
@@ -160,7 +164,7 @@ impl<'ctx> Callable<'ctx> for Function<'ctx> {
 impl<'ctx> Value<'ctx> for Function<'ctx> {
     fn member(
         &self,
-        _ctx: &LanguageContext<'ctx>,
+        _ctx: &mut LanguageContext<'ctx>,
         name: Spanned<String>,
         _into: &str,
     ) -> Result<ValueEnum<'ctx>, CompileError> {
@@ -182,7 +186,7 @@ impl<'ctx> Value<'ctx> for Function<'ctx> {
         ))
     }
 
-    fn get_type(&self, _ctx: &LanguageContext<'ctx>) -> TypeID {
+    fn get_type(&self) -> TypeID {
         self.metatype.clone()
     }
 
@@ -232,7 +236,7 @@ impl<'ctx> Copyable<'ctx> for Function<'ctx> {
         Self::from_val(
             ctx,
             BasicValueEnum::PointerValue(other.ptr),
-            other.get_type(ctx),
+            other.get_type(),
             name,
         )
     }
@@ -323,7 +327,7 @@ impl<'ctx> Callable<'ctx> for MemberFunction<'ctx> {
         args: Vec<ValueEnum<'ctx>>,
         into_name: &str,
     ) -> Result<ValueEnum<'ctx>, String> {
-        if !self.verify(args.iter().map(|arg| arg.get_type(ctx)).collect()) {
+        if !self.verify(args.iter().map(|arg| arg.get_type()).collect()) {
             return Err("Arguments to this function are incorrect.".to_string()); // TODO: Improve this error.
         }
 
@@ -351,7 +355,7 @@ impl<'ctx> Callable<'ctx> for MemberFunction<'ctx> {
 impl<'ctx> Value<'ctx> for MemberFunction<'ctx> {
     fn member(
         &self,
-        ctx: &LanguageContext<'ctx>,
+        ctx: &mut LanguageContext<'ctx>,
         name: Spanned<String>,
         into: &str,
     ) -> Result<ValueEnum<'ctx>, CompileError> {
@@ -373,7 +377,7 @@ impl<'ctx> Value<'ctx> for MemberFunction<'ctx> {
         ))
     }
 
-    fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeID {
+    fn get_type(&self) -> TypeID {
         self.metatype.clone()
     }
 
@@ -432,7 +436,7 @@ impl<'ctx> Copyable<'ctx> for MemberFunction<'ctx> {
         Self::from_val(
             ctx,
             BasicValueEnum::StructValue(other.val),
-            other.get_type(ctx),
+            other.get_type(),
             name,
         )
     }

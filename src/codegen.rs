@@ -27,11 +27,11 @@ use crate::{
     float::Float,
     int::Int,
     parser::{
-        Atom, Break, Continue, Decl, Eval, Expr, For, If, Match, ParseLiteral, ParserType, Primary,
-        Program, Return, Set, Stmt, Var, While,
+        Atom, Break, Continue, Decl, Eval, Expr, For, FunctionDecl, If, Match, ParseLiteral,
+        ParserType, Primary, Program, Return, Set, Stmt, Var, While,
     },
     string::Str,
-    types::{BasicBuiltin, Metatype, MetatypeBuilder, TypeID},
+    types::{BasicBuiltin, ClassBuilder, Metatype, MetatypeBuilder, TypeID},
     unit::Unit,
     value::{Copyable, Field, Literal, Value, ValueEnum, ValueRef, any_to_basic},
     vector::Vector,
@@ -120,11 +120,11 @@ fn gen_atom<'ctx>(
                     &format!("{}_elem{}", into_name, i),
                 )?);
             }
-            let vec_type = TypeID::new("Vector", vec![values[0].get_type(ctx)]);
+            let vec_type = TypeID::new("Vector", vec![values[0].get_type()]);
             ctx.get_with_gen_ext(vec_type.clone());
             let vec = Vector::new(ctx, vec_type.clone(), into_name);
             for (i, val) in values.iter().enumerate() {
-                if val.get_type(ctx) != vec_type.generics[0] {
+                if val.get_type() != vec_type.generics[0] {
                     return Err(CompileError::new(
                         exprs.span,
                         "Not all elements in the array have the same type.",
@@ -163,7 +163,7 @@ fn gen_primary<'ctx>(
         Primary::Atom(atom) => gen_atom(ctx, info, atom, into_name),
         Primary::Call { on, generics, args } => {
             let on_eval = gen_primary(ctx, info, on, &format!("{}_callee", into_name))?;
-            let on_typ = on_eval.get_type(ctx);
+            let on_typ = on_eval.get_type();
             let mut args_eval = Vec::<ValueEnum<'ctx>>::new();
             for (i, arg) in args.iter().enumerate() {
                 args_eval.push(gen_expr(
@@ -199,7 +199,7 @@ fn gen_primary<'ctx>(
         }
         Primary::Slice { on, expr } => {
             let on_eval = gen_primary(ctx, info, on, &format!("{}_callee", into_name))?;
-            let on_typ = on_eval.get_type(ctx);
+            let on_typ = on_eval.get_type();
             let slice_eval = gen_expr(ctx, info, expr, &format!("{into_name}_slice"))?;
             let slice_fn = on_eval
                 .member(
@@ -259,8 +259,8 @@ fn gen_expr<'ctx>(
         Expr::Binary(left, op, right) => {
             let left_val = gen_expr(ctx, info, left, &format!("{}_left", into_name))?;
             let right_val = gen_expr(ctx, info, right, &format!("{}_right", into_name))?;
-            let left_type = left_val.get_type(ctx);
-            let right_type = right_val.get_type(ctx);
+            let left_type = left_val.get_type();
+            let right_type = right_val.get_type();
             if left_type != right_type {
                 return Err(CompileError(vec![
                     (
@@ -269,11 +269,11 @@ fn gen_expr<'ctx>(
                     ),
                     (
                         left.span,
-                        format!("Left operator is of type `{}`.", left_val.get_type(ctx)),
+                        format!("Left operator is of type `{}`.", left_val.get_type()),
                     ),
                     (
                         right.span,
-                        format!("Right operator is of type `{}`.", right_val.get_type(ctx)),
+                        format!("Right operator is of type `{}`.", right_val.get_type()),
                     ),
                 ]));
             }
@@ -334,7 +334,7 @@ fn lift_eval<'ctx>(
     let out = if mem.is_none() {
         Some(
             ctx.builder
-                .build_alloca(ctx.get_storage(value.get_type(ctx)), "if_eval_ptr")
+                .build_alloca(ctx.get_storage(value.get_type()), "if_eval_ptr")
                 .unwrap(),
         )
     } else {
@@ -362,12 +362,12 @@ fn gen_if<'ctx>(
     let continued_block = ctx.context.append_basic_block(info.function, "continue");
 
     let cond_eval = gen_expr(ctx, info, condition, "while_condition")?;
-    if cond_eval.get_type(ctx) != TypeID::from_base("Bool") {
+    if cond_eval.get_type() != TypeID::from_base("Bool") {
         return Err(CompileError::new(
             condition.span,
             &format!(
                 "Expression must evaluate to type `Bool` in an `if` statement, instead it evaluates to type `{}`.",
-                cond_eval.get_type(ctx)
+                cond_eval.get_type()
             ),
         ));
     }
@@ -471,13 +471,13 @@ fn gen_if<'ctx>(
         let loaded = ctx
             .builder
             .build_load(
-                ctx.get_storage(value.inner.get_type(ctx)),
+                ctx.get_storage(value.inner.get_type()),
                 eval_mem.unwrap(),
                 into_name,
             )
             .unwrap();
         let span = value.span;
-        let loaded_wrapped = ValueEnum::from_val(ctx, loaded, value.get_type(ctx), into_name);
+        let loaded_wrapped = ValueEnum::from_val(ctx, loaded, value.get_type(), into_name);
         if_returns = StmtEval::Eval(name, value.span.make_wrapped(loaded_wrapped));
     }
 
@@ -496,7 +496,7 @@ fn gen_var_decl<'ctx>(
         return Err(eval.unwrap_err());
     }
     let eval = eval.unwrap();
-    let eval_type = eval.get_type(ctx).name();
+    let eval_type = eval.get_type().name();
     if typ.is_some() && eval_type != typ.as_ref().unwrap().to_typeid().name() {
         return Err(CompileError::with_notes(
             value.span,
@@ -524,16 +524,21 @@ fn gen_stmt<'ctx>(
 ) -> Result<StmtEval<'ctx>, CompileError> {
     match stmt {
         Stmt::Error(_) => panic!(),
-        Stmt::Var(Var { name, typ, value }) => gen_var_decl(ctx, info, name, typ, value),
+        Stmt::Var(Var {
+            annotations,
+            name,
+            typ,
+            value,
+        }) => gen_var_decl(ctx, info, name, typ, value),
         Stmt::Set(Set { on, value }) => {
             let expr = gen_expr(ctx, info, value.as_ref(), "UNUSED_setas")?;
             let field = gen_primary_ref(ctx, info, on, "UNUSED_setto")?;
-            if field.typ != expr.get_type(ctx) {
+            if field.typ != expr.get_type() {
                 return Err(CompileError::with_notes(
                     value.span,
                     &format!(
                         "Type of expression, `{}`, is different from the type of the field.",
-                        expr.get_type(ctx)
+                        expr.get_type()
                     ),
                     on.span,
                     &format!("The type of the field is `{}`", field.typ),
@@ -560,12 +565,12 @@ fn gen_stmt<'ctx>(
             ctx.builder.position_at_end(cond_block);
 
             let cond_eval = gen_expr(ctx, info, condition, "while_condition")?;
-            if cond_eval.get_type(ctx) != TypeID::from_base("Bool") {
+            if cond_eval.get_type() != TypeID::from_base("Bool") {
                 return Err(CompileError::new(
                     condition.span,
                     &format!(
                         "Expression must evaluate to type `Bool` in a `while` loop, instead it evaluates to type `{}`.",
-                        cond_eval.get_type(ctx)
+                        cond_eval.get_type()
                     ),
                 ));
             }
@@ -599,7 +604,7 @@ fn gen_stmt<'ctx>(
                     loopee.span,
                     &format!(
                         "Loopee of a `for` loop must be of type `Vec`, instead it is of type `{}`",
-                        loopee_eval.get_type(ctx)
+                        loopee_eval.get_type()
                     ),
                 ));
             }
@@ -688,7 +693,7 @@ fn gen_stmts<'ctx>(
         let eval = gen_stmt(ctx, info, stmt, into_name)?;
         match eval {
             StmtEval::Return(ref ret) => {
-                if ret.get_type(ctx) != info.returns {
+                if ret.get_type() != info.returns {
                     let mut out = CompileError::new(
                         stmt.span,
                         &format!("Incorrect return type, expected `{}`", info.returns),
@@ -727,13 +732,14 @@ pub fn gen_decl_pre<'ctx>(
     init_fn: FunctionValue<'ctx>,
 ) -> Result<(), CompileError> {
     match decl {
-        Decl::Function {
+        Decl::Function(FunctionDecl {
+            annotations,
             name,
             generics,
             params,
             returns,
             body,
-        } => {
+        }) => {
             let scope = ctx.current_scope();
             if scope.contains_key(&name.inner) {
                 return Err(CompileError::new(
@@ -796,11 +802,17 @@ pub fn gen_decl_pre<'ctx>(
             Ok(())
         }
         Decl::Class {
+            annotations,
             name,
             params,
             decls,
         } => Ok(()),
-        Decl::Var(Var { name, typ, value }) => gen_var_decl(
+        Decl::Var(Var {
+            annotations,
+            name,
+            typ,
+            value,
+        }) => gen_var_decl(
             ctx,
             &FunctionInfo {
                 function: init_fn,
@@ -821,14 +833,20 @@ pub fn gen_decl<'ctx>(
     decl: &Decl,
 ) -> Result<(), CompileError> {
     match decl {
-        Decl::Var(Var { name, typ, value }) => todo!(),
-        Decl::Function {
+        Decl::Var(Var {
+            annotations,
+            name,
+            typ,
+            value,
+        }) => todo!(),
+        Decl::Function(FunctionDecl {
+            annotations,
             name,
             generics,
             params,
             returns,
             body,
-        } => {
+        }) => {
             let returns_spanned = returns;
             let returns = match returns {
                 Some(returns) => returns.to_typeid(),
@@ -876,124 +894,44 @@ pub fn gen_decl<'ctx>(
             Ok(())
         }
         Decl::Class {
+            annotations,
             name,
             params,
             decls,
         } => {
             ctx.push_scope();
 
-            let class_struct = ctx
-                .context
-                .opaque_struct_type(&format!("User__{}", name.inner));
-
-            let init_llvm_type = ctx.types.ptr.fn_type(
+            let mut builder = ClassBuilder::new(
+                ctx,
+                name,
                 &params
                     .iter()
-                    .map(|(_, typ)| {
-                        any_to_basic(ctx.get(typ.to_typeid()).storage_type)
-                            .unwrap()
-                            .into()
-                    })
-                    .collect::<Vec<_>>(),
-                false,
+                    .map(|(name, typ)| (name.clone(), typ.to_typeid()))
+                    .collect(),
             );
-            let init_llvm_fn =
-                ctx.add_function(&format!("User__{}.()", name.inner), init_llvm_type);
-            let init_type = TypeID::new(
-                "Function",
-                vec![
-                    TypeID::new(
-                        "Tuple",
-                        params.iter().map(|(name, typ)| typ.to_typeid()).collect(),
-                    ),
-                    TypeID::from_base(name),
-                ],
-            );
-            let init_fn = Function::from_function(ctx.context, ctx, init_llvm_fn, init_type);
 
-            let old_block = ctx.begin_function(init_llvm_fn);
-
-            let mut builder = MetatypeBuilder::new(
-                ctx,
-                BasicBuiltin::Class,
-                TypeID::from_base(name),
-                None,
-                ctx.types.ptr.into(),
-                false,
-            );
-            builder.add_initializer(init_fn);
-
-            gen_decls_pre(ctx, decls, Some(TypeID::from_base(name)), init_llvm_fn);
-
-            let mut body = Vec::<BasicTypeEnum<'ctx>>::new();
-            let mut members = BTreeMap::<String, ClassMember>::new();
-            let mut functions = BTreeMap::<String, Function<'ctx>>::new();
-            let mut functions_decls = BTreeMap::<String, (Function<'ctx>, &Decl)>::new();
-            let mut to_store = Vec::<(BasicValueEnum<'ctx>, u32, &String)>::new();
-
-            let mut member_index = 0;
-            for ((name, typ), val) in params.iter().zip(init_llvm_fn.get_params()) {
-                body.push(val.get_type());
-                to_store.push((val, member_index, &name.inner));
-                ctx.add_field(
-                    name,
-                    Field::new(ValueEnum::from_val(ctx, val, typ.to_typeid(), name), name),
-                );
-                members.insert(
-                    name.inner.clone(),
-                    ClassMember::new(typ.to_typeid(), member_index),
-                );
-                member_index += 1;
-            }
-
-            let scope = ctx.current_scope();
-            for ((name, field), decl) in scope.iter().zip(decls) {
-                if let Some(function) = field.value.clone().try_as_function() {
-                    functions.insert(name.clone(), function.clone());
-                    functions_decls.insert(name.clone(), (function, decl));
-                } else {
-                    body.push(
-                        any_to_basic(ctx.get(field.value.get_type(ctx)).storage_type).unwrap(),
-                    );
-                    to_store.push((field.value.get_value(), member_index, name));
-                    members.insert(
-                        name.clone(),
-                        ClassMember::new(field.value.get_type(ctx), member_index),
-                    );
-                    member_index += 1;
+            let mut functions: Vec<&FunctionDecl> = vec![];
+            for decl in decls {
+                match decl {
+                    Decl::Function(function_decl) => {
+                        functions.push(function_decl);
+                    }
+                    _ => (),
                 }
             }
 
-            class_struct.set_body(&body, false);
+            gen_decls_pre(ctx, decls, Some(TypeID::from_base(name)), builder.init_llvm);
 
-            let malloc = ctx.module.get_function("GC_malloc").unwrap();
-            let mem = ctx
-                .build_call_returns(malloc, &[class_struct.size_of().unwrap().into()], "out")
-                .into_pointer_value();
-
-            for (val, index, name) in to_store {
-                ctx.build_ptr_store(class_struct, mem, val, index, name);
+            let scope = ctx.current_scope();
+            for ((name, field), decl) in scope.iter().zip(decls) {
+                builder.add_member(name, &field.value);
             }
 
-            if functions.contains_key("init") {
-                let init_type = ctx.types.void.fn_type(&[ctx.types.ptr.into()], false);
-                ctx.builder.build_indirect_call(
-                    init_type,
-                    functions["init"].ptr,
-                    &[mem.into()],
-                    "UNUSED",
-                );
-            }
+            let mut functions_decls = ctx.pop_scope();
 
-            ctx.pop_scope();
-            ctx.builder.build_return(Some(&mem));
-            ctx.builder.position_at_end(old_block);
+            builder.build(ctx);
 
-            let class_info = ClassInfo::new(class_struct, members.clone(), functions);
-            builder.add_class_info(class_info);
-            builder.build(llvm_ctx, ctx, vec![]);
-
-            for (fn_name, (function, decl)) in functions_decls {
+            for ((fn_name, fun), decl) in builder.functions.iter().zip(functions) {
                 let function_val = ctx
                     .module
                     .get_function(&format!("User__{}.{fn_name}", name.inner))
@@ -1001,74 +939,51 @@ pub fn gen_decl<'ctx>(
                 let old_block = ctx.begin_function(function_val);
                 ctx.push_scope();
 
-                ctx.get_with_gen_ext(TypeID::new(
-                    "MemberFunction",
-                    vec![
-                        function.args()[0].clone(),
-                        TypeID::new("Tuple", function.args()[1..].to_vec()),
-                        function.returns(),
-                    ],
-                ));
+                let returns = match &decl.returns {
+                    Some(typ) => typ.to_typeid(),
+                    None => TypeID::from_base("Unit"),
+                };
 
-                match decl {
-                    Decl::Function {
-                        name,
-                        generics,
-                        params,
-                        returns,
-                        body,
-                    } => {
-                        let returns_spanned = returns;
-                        let returns = match returns {
-                            Some(returns) => returns.to_typeid(),
-                            None => TypeID::from_base("Unit"),
-                        };
+                let obj = function_val.get_first_param().unwrap().into_pointer_value();
+                for (name, member) in &builder.members {
+                    let value = ctx.build_ptr_load(
+                        builder.class_struct,
+                        member.typ.clone(),
+                        obj,
+                        member.index,
+                        &name,
+                    );
+                    let value = ValueEnum::from_val(ctx, value, member.typ.clone(), &name);
+                    ctx.add_field(&name, Field::new(value, &name));
+                }
+                // TODO: add member functions
+                for ((name, typ), value) in params.iter().zip(function_val.get_params()).skip(1) {
+                    value.set_name(name);
+                    let value = ValueEnum::from_val(ctx, value, typ.to_typeid(), name);
+                    ctx.add_field(name, Field::new(value, name));
+                }
 
-                        let obj = function_val.get_first_param().unwrap().into_pointer_value();
-                        for (name, member) in members.clone() {
-                            let value = ctx.build_ptr_load(
-                                class_struct,
-                                member.typ.clone(),
-                                obj,
-                                member.index,
-                                &name,
-                            );
-                            let value = ValueEnum::from_val(ctx, value, member.typ, &name);
-                            ctx.add_field(&name, Field::new(value, &name));
-                        }
-                        // TODO: add member functions
-                        for ((name, typ), value) in
-                            params.iter().zip(function_val.get_params()).skip(1)
-                        {
-                            value.set_name(name);
-                            let value = ValueEnum::from_val(ctx, value, typ.to_typeid(), name);
-                            ctx.add_field(name, Field::new(value, name));
-                        }
+                let returns_val = gen_stmts(
+                    ctx,
+                    &decl.body.inner,
+                    &FunctionInfo {
+                        function: function_val,
+                        returns: returns.clone(),
+                        returns_spanned: decl.returns.clone(),
+                    },
+                    "UNUSED",
+                )?;
 
-                        let returns_val = gen_stmts(
-                            ctx,
-                            &body.inner,
-                            &FunctionInfo {
-                                function: function_val,
-                                returns: returns.clone(),
-                                returns_spanned: returns_spanned.clone(),
-                            },
-                            "UNUSED",
-                        )?;
-
-                        if returns_val.is_none() {
-                            if returns != TypeID::from_base("Unit") {
-                                return Err(CompileError::with_notes(
-                                    body.span,
-                                    "Function does not always return.",
-                                    returns_spanned.as_ref().unwrap().span,
-                                    "Return type specified here.",
-                                ));
-                            }
-                            ctx.builder.build_return(None);
-                        }
+                if returns_val.is_none() {
+                    if returns != TypeID::from_base("Unit") {
+                        return Err(CompileError::with_notes(
+                            decl.body.span,
+                            "Function does not always return.",
+                            decl.returns.as_ref().unwrap().span,
+                            "Return type specified here.",
+                        ));
                     }
-                    _ => panic!(),
+                    ctx.builder.build_return(None);
                 }
 
                 ctx.pop_scope();

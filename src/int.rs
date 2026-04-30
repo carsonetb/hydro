@@ -64,7 +64,7 @@ impl<'ctx> Int<'ctx> {
 impl<'ctx> Value<'ctx> for Int<'ctx> {
     fn member(
         &self,
-        ctx: &LanguageContext<'ctx>,
+        ctx: &mut LanguageContext<'ctx>,
         name: Spanned<String>,
         into: &str,
     ) -> Result<ValueEnum<'ctx>, CompileError> {
@@ -146,7 +146,7 @@ impl<'ctx> Value<'ctx> for Int<'ctx> {
         ))
     }
 
-    fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeID {
+    fn get_type(&self) -> TypeID {
         TypeID::from_base("Int")
     }
 
@@ -306,7 +306,7 @@ impl<'ctx> Copyable<'ctx> for Int<'ctx> {
     }
 
     fn from(ctx: &LanguageContext<'ctx>, other: Self, name: &str) -> Self {
-        Self::from_val(ctx, other.get_value(), other.get_type(ctx), name)
+        Self::from_val(ctx, other.get_value(), other.get_type(), name)
     }
 
     fn from_ptr(

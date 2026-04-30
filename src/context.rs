@@ -338,6 +338,12 @@ impl<'ctx> LanguageContext<'ctx> {
             .build_load(self.get_storage(member_typ), ptr, name)
             .unwrap()
     }
+
+    pub fn build_gc_malloc(&self, size: IntValue<'ctx>, name: &str) -> PointerValue<'ctx> {
+        let malloc = self.module.get_function("GC_malloc").unwrap();
+        self.build_call_returns(malloc, &[size.into()], name)
+            .into_pointer_value()
+    }
 }
 
 pub struct LLVMTypes<'ctx> {

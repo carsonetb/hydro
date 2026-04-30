@@ -1,14 +1,18 @@
-use std::{collections::HashMap, fmt::Display};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt::Display,
+};
 
 use chumsky::span::{SimpleSpan, Span, Spanned, WrappingSpan};
 use inkwell::{
+    basic_block::BasicBlock,
     context::Context,
     types::{AnyTypeEnum, BasicTypeEnum, FunctionType, StructType},
     values::{BasicValueEnum, FunctionValue, PointerValue},
 };
 
 use crate::{
-    callable::{Function, function_type},
+    callable::{Callable, Function, function_type},
     classes::{ClassInfo, ClassMember},
     codegen::CompileError,
     context::LanguageContext,
@@ -98,7 +102,7 @@ impl<'ctx> Metatype<'ctx> {}
 impl<'ctx> Value<'ctx> for Metatype<'ctx> {
     fn member(
         &self,
-        ctx: &LanguageContext<'ctx>,
+        ctx: &mut LanguageContext<'ctx>,
         name: Spanned<String>,
         into: &str,
     ) -> Result<ValueEnum<'ctx>, CompileError> {
@@ -166,7 +170,7 @@ impl<'ctx> Value<'ctx> for Metatype<'ctx> {
         })
     }
 
-    fn get_type(&self, _ctx: &LanguageContext<'ctx>) -> TypeID {
+    fn get_type(&self) -> TypeID {
         TypeID::from_base("Type")
     }
 
@@ -288,7 +292,7 @@ impl<'ctx> MetatypeBuilder<'ctx> {
                 any_to_basic(
                     ctx.get_storage_with_gen(
                         llvm_ctx,
-                        SimpleSpan::new((), 0..0).make_wrapped(v.val.get_type(ctx)),
+                        SimpleSpan::new((), 0..0).make_wrapped(v.val.get_type()),
                     )
                     .unwrap(),
                 )
@@ -305,7 +309,7 @@ impl<'ctx> MetatypeBuilder<'ctx> {
             members.insert(
                 val.name.clone(),
                 Member {
-                    typ: val.val.get_type(ctx),
+                    typ: val.val.get_type(),
                     index: i,
                     value: val.val,
                 },
@@ -337,33 +341,140 @@ impl<'ctx> MetatypeBuilder<'ctx> {
     }
 }
 
+struct MemberDefault<'ctx> {
+    value: BasicValueEnum<'ctx>,
+    index: u32,
+    name: String,
+}
+
 /// ClassBuilder is a wrapper for MetatypeBuilder designed to asset in building
 /// specifically user created classes (of base BasicBuiltin::Class).
 pub struct ClassBuilder<'ctx> {
-    class_struct: StructType<'ctx>,
-    members: BTreeMap<String, ClassMember>,
-    functions: BTreeMap<String, Function<'ctx>>,
-    initializer: FunctionValue<'ctx>,
+    old_block: BasicBlock<'ctx>,
+
+    pub class_struct: StructType<'ctx>,
+    pub init_llvm: FunctionValue<'ctx>,
+    body: Vec<BasicTypeEnum<'ctx>>,
+    static_body: Vec<BasicTypeEnum<'ctx>>,
+
+    initializer: Function<'ctx>,
+    builder: MetatypeBuilder<'ctx>,
+    pub members: BTreeMap<String, ClassMember>,
+    pub functions: BTreeMap<String, Function<'ctx>>,
+    default_members: Vec<MemberDefault<'ctx>>,
+
+    member_index: u32,
 }
 
 impl<'ctx> ClassBuilder<'ctx> {
     pub fn new(
         ctx: &mut LanguageContext<'ctx>,
         name: &str,
-        params: &Vec<(String, TypeID)>,
+        params: &Vec<(Spanned<String>, TypeID)>,
     ) -> Self {
-        let init_llvm_type = ctx.types.ptr.fn_type(
-            params
-                .iter()
-                .map(|(_, typ)| any_to_basic(ctx.get(typ.clone()).storage_type))
-                .collect(),
-            is_var_args,
+        let mut builder = MetatypeBuilder::new(
+            ctx,
+            BasicBuiltin::Class,
+            TypeID::from_base(name),
+            None,
+            ctx.types.ptr.into(),
+            false,
         );
-        let init_llvm_fn = ctx.add_function(&format("User__{}.()", name), init_llvm_type);
+
+        let class_struct = ctx.context.opaque_struct_type(&format!("User__{name}"));
+
+        let init_llvm_type = ctx.types.ptr.fn_type(
+            &params
+                .iter()
+                .map(|(_, typ)| {
+                    any_to_basic(ctx.get(typ.clone()).storage_type)
+                        .unwrap()
+                        .into()
+                })
+                .collect::<Vec<_>>(),
+            false,
+        );
+        let init_llvm_fn = ctx.add_function(&format!("User__{}.()", name), init_llvm_type);
         let init_type = function_type(
-            params.iter().map(|(name, typ)| typ).collect(),
+            params.iter().map(|(name, typ)| typ.clone()).collect(),
             TypeID::from_base(name),
         );
         let init_fn = Function::from_function(ctx.context, ctx, init_llvm_fn, init_type);
+        builder.add_initializer(init_fn.clone());
+
+        let old_block = ctx.begin_function(init_llvm_fn);
+
+        let mut out = Self {
+            old_block,
+            class_struct: class_struct,
+            init_llvm: init_llvm_fn,
+            body: vec![],
+            static_body: vec![],
+
+            initializer: init_fn,
+            builder,
+            members: BTreeMap::new(),
+            functions: BTreeMap::new(),
+            default_members: vec![],
+
+            member_index: 0,
+        };
+
+        for ((name, typ), val) in params.iter().zip(init_llvm_fn.get_params()) {
+            out.add_member(name, &ValueEnum::from_val(ctx, val, typ.clone(), name));
+        }
+
+        out
+    }
+
+    pub fn build(&mut self, ctx: &mut LanguageContext<'ctx>) {
+        self.class_struct.set_body(&self.body, false);
+
+        let mem = ctx.build_gc_malloc(self.class_struct.size_of().unwrap(), "out");
+        for MemberDefault { value, index, name } in &self.default_members {
+            ctx.build_ptr_store(self.class_struct, mem, *value, *index, &name);
+        }
+
+        if self.functions.contains_key("init") {
+            let function = self.functions["init"].to_member_function(ctx, mem.into(), "init");
+            function.call(ctx, vec![], "UNUSED").unwrap();
+        };
+
+        ctx.builder.build_return(Some(&mem));
+        ctx.builder.position_at_end(self.old_block);
+
+        self.builder.add_class_info(ClassInfo::new(
+            self.class_struct,
+            self.members.clone(),
+            self.functions.clone(),
+        ));
+        self.builder.build(ctx.context, ctx, vec![]);
+    }
+
+    pub fn add_member(&mut self, name: &String, value: &ValueEnum<'ctx>) {
+        // TODO: Check if init function and validate.
+        match value {
+            ValueEnum::Function(function) => {
+                self.functions.insert(name.clone(), function.clone());
+            }
+            _ => {
+                let llvm_value = value.get_value();
+                self.body.push(llvm_value.get_type());
+                self.default_members.push(MemberDefault {
+                    value: llvm_value,
+                    index: self.member_index,
+                    name: name.clone(),
+                });
+                self.members.insert(
+                    name.clone(),
+                    ClassMember::new(value.get_type(), self.member_index),
+                );
+                self.member_index += 1;
+            }
+        }
+    }
+
+    pub fn add_static(&mut self, name: &str, value: &ValueEnum<'ctx>) {
+        self.builder.add_static(name, value.clone());
     }
 }

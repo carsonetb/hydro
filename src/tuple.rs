@@ -23,7 +23,7 @@ impl<'ctx> Tuple<'ctx> {}
 impl<'ctx> Value<'ctx> for Tuple<'ctx> {
     fn member(
         &self,
-        ctx: &LanguageContext<'ctx>,
+        ctx: &mut LanguageContext<'ctx>,
         name: Spanned<String>,
         into: &str,
     ) -> Result<ValueEnum<'ctx>, CompileError> {
@@ -32,7 +32,7 @@ impl<'ctx> Value<'ctx> for Tuple<'ctx> {
                 name.span,
                 &format!(
                     "`{}` has no member `{}`. All Tuple member must be a number.",
-                    self.get_type(ctx),
+                    self.get_type(),
                     name.inner
                 ),
             )
@@ -50,7 +50,7 @@ impl<'ctx> Value<'ctx> for Tuple<'ctx> {
                     name.span,
                     &format!(
                         "`{}` does not have `{}` items.",
-                        self.get_type(ctx),
+                        self.get_type(),
                         as_int + 1
                     ),
                 )
@@ -80,7 +80,7 @@ impl<'ctx> Value<'ctx> for Tuple<'ctx> {
         todo!()
     }
 
-    fn get_type(&self, ctx: &LanguageContext<'ctx>) -> TypeID {
+    fn get_type(&self) -> TypeID {
         self.metatype.clone()
     }
 

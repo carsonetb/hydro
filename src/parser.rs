@@ -34,18 +34,23 @@ pub struct Import {
 #[derive(Debug)]
 pub enum Decl {
     Var(Var),
-    Function {
-        name: Spanned<String>,
-        generics: Vec<GenericParam>,
-        params: Vec<(Spanned<String>, ParserType)>,
-        returns: Option<ParserType>,
-        body: Spanned<Vec<Spanned<Stmt>>>,
-    },
+    Function(FunctionDecl),
     Class {
+        annotations: Vec<Annotation>,
         name: Spanned<String>,
         params: Vec<(Spanned<String>, ParserType)>,
         decls: Vec<Decl>,
     },
+}
+
+#[derive(Debug)]
+pub struct FunctionDecl {
+    pub annotations: Vec<Annotation>,
+    pub name: Spanned<String>,
+    pub generics: Vec<GenericParam>,
+    pub params: Vec<(Spanned<String>, ParserType)>,
+    pub returns: Option<ParserType>,
+    pub body: Spanned<Vec<Spanned<Stmt>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -66,6 +71,7 @@ pub enum Stmt {
 
 #[derive(Debug, Clone)]
 pub struct Var {
+    pub annotations: Vec<Annotation>,
     pub name: Spanned<String>,
     pub typ: Option<ParserType>,
     pub value: Spanned<Box<Expr>>,
@@ -175,6 +181,14 @@ pub enum ParseLiteral {
 }
 
 #[derive(Debug, Clone)]
+pub enum Annotation {
+    CONST,
+    STATIC,
+    ABSTRACT,
+    VIRTUAL,
+}
+
+#[derive(Debug, Clone)]
 pub struct ParserType {
     pub span: SimpleSpan,
     pub base: Spanned<String>,
@@ -261,6 +275,18 @@ pub fn stmt_name<'src>() -> impl GenericParser<'src, Option<Spanned<String>>> + 
     just("'")
         .ignore_then(ident().map(|s: &str| s.to_string()).spanned())
         .or_not()
+}
+
+pub fn annotations<'src>() -> impl GenericParser<'src, Vec<Annotation>> + Clone {
+    choice((
+        just("const").map(|_| Annotation::CONST),
+        just("static").map(|_| Annotation::STATIC),
+        just("abstract").map(|_| Annotation::ABSTRACT),
+        just("virtual").map(|_| Annotation::VIRTUAL),
+    ))
+    .padded()
+    .repeated()
+    .collect()
 }
 
 pub fn literal<'src>() -> impl GenericParser<'src, Spanned<ParseLiteral>> + Clone {
@@ -504,14 +530,14 @@ pub fn var<'src>(
     block: impl GenericParser<'src, Vec<Spanned<Stmt>>> + Clone + 'src,
 ) -> impl GenericParser<'src, Var> + Clone {
     let ident = text::ascii::ident().spanned();
-    text::ascii::keyword("var")
-        .labelled("var decl")
-        .padded()
-        .ignore_then(ident)
+    annotations()
+        .then_ignore(text::ascii::keyword("var").labelled("var decl").padded())
+        .then(ident)
         .then(just(':').padded().ignore_then(type_parser()).or_not())
         .then_ignore(just("=").padded())
         .then(expr)
-        .map(|((name, typ), value)| Var {
+        .map(|(((annotations, name), typ), value)| Var {
+            annotations,
             name: name.span.make_wrapped(name.to_string()),
             typ: typ,
             value: value.span.make_wrapped(Box::new(value.inner)),
@@ -729,33 +755,37 @@ pub fn params<'src>()
 pub fn decl<'src>() -> impl Parser<'src, &'src str, Decl, extra::Err<Rich<'src, char>>> + Clone {
     recursive(|decl| {
         let var = var(expr(block()), block()).map(Decl::Var);
-        let function = text::keyword("fn")
-            .padded()
-            .ignore_then(text::ident().spanned().padded()) // TODO: Function generic params.
+        let function = annotations()
+            .then_ignore(text::keyword("fn").padded())
+            .then(text::ident().spanned().padded()) // TODO: Function generic params.
             .then(params().or_not())
             .then(just("->").padded().ignore_then(type_parser()).or_not())
             .then(block().spanned())
-            .map(|(((name, params), returns), body)| Decl::Function {
-                name: name.span.make_wrapped(name.inner.to_string()),
-                generics: vec![],
-                params: match params {
-                    Some(params) => params,
-                    None => vec![],
-                },
-                returns,
-                body,
+            .map(|((((annotations, name), params), returns), body)| {
+                Decl::Function(FunctionDecl {
+                    annotations,
+                    name: name.span.make_wrapped(name.inner.to_string()),
+                    generics: vec![],
+                    params: match params {
+                        Some(params) => params,
+                        None => vec![],
+                    },
+                    returns,
+                    body,
+                })
             })
             .boxed();
-        let class = keyword("class")
-            .padded()
-            .ignore_then(ident().spanned())
+        let class = annotations()
+            .then_ignore(keyword("class").padded())
+            .then(ident().spanned())
             .then(params().or_not())
             .then(
                 decl.repeated()
                     .collect::<Vec<_>>()
                     .delimited_by(just("{").padded(), just("}").padded()),
             )
-            .map(|((name, params), decls)| Decl::Class {
+            .map(|(((annotations, name), params), decls)| Decl::Class {
+                annotations,
                 name: name.span.make_wrapped(name.inner.to_string()),
                 params: match params {
                     Some(params) => params,
