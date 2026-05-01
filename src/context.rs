@@ -25,7 +25,7 @@ use inkwell::{
 
 use crate::{
     bool::Bool,
-    callable::{Function, MemberFunction},
+    callable::{Function, MemberFunction, function_type},
     codegen::CompileError,
     float::Float,
     int::Int,
@@ -96,16 +96,18 @@ impl<'ctx> LanguageContext<'ctx> {
         self.module.link_in_module(builtins_module);
 
         let print_llvm_fn = self.module.get_function("print").unwrap();
-
-        let print_type = TypeID::new(
-            "Function",
-            vec![
-                TypeID::new("Tuple", vec![TypeID::from_base("String")]),
-                TypeID::from_base("Unit"),
-            ],
-        );
+        let print_type =
+            function_type(vec![TypeID::from_base("String")], TypeID::from_base("Unit"));
         let print = Function::from_function(context, self, print_llvm_fn, print_type);
         self.add_field("print", Field::new(ValueEnum::Function(print), "print"));
+
+        let input_llvm_fn = self.module.get_function("input").unwrap();
+        let input_type = function_type(
+            vec![TypeID::from_base("String")],
+            TypeID::from_base("String"),
+        );
+        let input = Function::from_function(context, self, input_llvm_fn, input_type);
+        self.add_field("input", Field::new(ValueEnum::Function(input), "input"));
 
         self.generic_gens
             .insert("Function", Function::build_metatype);

@@ -706,7 +706,7 @@ fn gen_stmts<'ctx>(
                     }
                     return Err(out);
                 }
-                let ret_value: Option<&dyn BasicValue<'ctx>> = if ret.inner.is_unit() {
+                let ret_value: Option<&dyn BasicValue<'ctx>> = if !ret.inner.is_unit() {
                     Some(&ret.get_value())
                 } else {
                     None

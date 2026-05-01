@@ -754,7 +754,9 @@ pub fn params<'src>()
 
 pub fn decl<'src>() -> impl Parser<'src, &'src str, Decl, extra::Err<Rich<'src, char>>> + Clone {
     recursive(|decl| {
-        let var = var(expr(block()), block()).map(Decl::Var);
+        let var = var(expr(block()), block())
+            .map(Decl::Var)
+            .then_ignore(just(";").padded());
         let function = annotations()
             .then_ignore(text::keyword("fn").padded())
             .then(text::ident().spanned().padded()) // TODO: Function generic params.

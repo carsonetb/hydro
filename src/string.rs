@@ -1,5 +1,6 @@
 use chumsky::span::Spanned;
 use inkwell::{
+    context::Context,
     types::{AnyType, BasicMetadataTypeEnum, BasicType},
     values::{
         BasicMetadataValueEnum, BasicValue, BasicValueEnum, IntValue, PointerValue, StructValue,
@@ -7,7 +8,7 @@ use inkwell::{
 };
 
 use crate::{
-    callable::{Function, function_type},
+    callable::{Function, MemberFunction, function_type},
     codegen::CompileError,
     context::LanguageContext,
     types::{BasicBuiltin, MetatypeBuilder, TypeID},
@@ -56,6 +57,18 @@ impl<'ctx> Value<'ctx> for Str<'ctx> {
         name: Spanned<String>,
         into: &str,
     ) -> Result<ValueEnum<'ctx>, CompileError> {
+        let format_type = TypeID::new(
+            "MemberFunction",
+            vec![
+                TypeID::from_base("String"),
+                TypeID::new(
+                    "Tuple",
+                    vec![TypeID::new("Vector", vec![TypeID::from_base("String")])],
+                ),
+                TypeID::from_base("String"),
+            ],
+        );
+
         match &name.inner[..] {
             "+" => Ok(ValueEnum::Function(Function::new(
                 ctx,
@@ -69,6 +82,13 @@ impl<'ctx> Value<'ctx> for Str<'ctx> {
                     TypeID::from_base("String"),
                 ),
                 "+",
+            ))),
+            "format" => Ok(ValueEnum::MemberFunction(MemberFunction::wrap_function(
+                ctx,
+                format_type,
+                "String__format",
+                self.val.into(),
+                "format",
             ))),
             _ => Err(CompileError::new(
                 name.span,
@@ -104,9 +124,9 @@ impl<'ctx> Value<'ctx> for Str<'ctx> {
 
 impl<'ctx> ValueStatic<'ctx> for Str<'ctx> {
     fn build_metatype(
-        llvm_ctx: &'ctx inkwell::context::Context,
-        ctx: &mut crate::context::LanguageContext<'ctx>,
-        generics: Vec<crate::types::TypeID>,
+        llvm_ctx: &'ctx Context,
+        ctx: &mut LanguageContext<'ctx>,
+        generics: Vec<TypeID>,
     ) {
         assert_eq!(generics.len(), 0);
 
@@ -135,6 +155,18 @@ impl<'ctx> ValueStatic<'ctx> for Str<'ctx> {
         builder.add_static("+", ValueEnum::Function(concat_fn));
 
         builder.build(llvm_ctx, ctx, generics);
+
+        ctx.get_with_gen_ext(TypeID::new(
+            "MemberFunction",
+            vec![
+                TypeID::from_base("String"),
+                TypeID::new(
+                    "Tuple",
+                    vec![TypeID::new("Vector", vec![TypeID::from_base("String")])],
+                ),
+                TypeID::from_base("String"),
+            ],
+        ));
     }
 }
 
