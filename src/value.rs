@@ -49,7 +49,7 @@ impl<'ctx> Field<'ctx> {
     }
 
     pub fn release(&self, ctx: &LanguageContext<'ctx>) {
-        assert_eq!(self.is_return, false);
+        assert!(!self.is_return);
         // TODO: Release current value.
     }
 }

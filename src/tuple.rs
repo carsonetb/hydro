@@ -100,7 +100,7 @@ impl<'ctx> ValueStatic<'ctx> for Tuple<'ctx> {
         generics: Vec<TypeID>,
     ) {
         let type_name = TypeID::new("Tuple", generics.clone());
-        let obj_struct = llvm_ctx.opaque_struct_type(&type_name.name().as_str());
+        let obj_struct = llvm_ctx.opaque_struct_type(type_name.name().as_str());
         let body: Vec<BasicTypeEnum<'ctx>> = generics
             .iter()
             .map(|g| ctx.get_storage(g.clone()))

@@ -182,10 +182,10 @@ pub enum ParseLiteral {
 
 #[derive(Debug, Clone)]
 pub enum Annotation {
-    CONST,
-    STATIC,
-    ABSTRACT,
-    VIRTUAL,
+    Const,
+    Static,
+    Abstract,
+    Virtual,
 }
 
 #[derive(Debug, Clone)]
@@ -279,10 +279,10 @@ pub fn stmt_name<'src>() -> impl GenericParser<'src, Option<Spanned<String>>> + 
 
 pub fn annotations<'src>() -> impl GenericParser<'src, Vec<Annotation>> + Clone {
     choice((
-        just("const").map(|_| Annotation::CONST),
-        just("static").map(|_| Annotation::STATIC),
-        just("abstract").map(|_| Annotation::ABSTRACT),
-        just("virtual").map(|_| Annotation::VIRTUAL),
+        just("const").map(|_| Annotation::Const),
+        just("static").map(|_| Annotation::Static),
+        just("abstract").map(|_| Annotation::Abstract),
+        just("virtual").map(|_| Annotation::Virtual),
     ))
     .padded()
     .repeated()
@@ -539,7 +539,7 @@ pub fn var<'src>(
         .map(|(((annotations, name), typ), value)| Var {
             annotations,
             name: name.span.make_wrapped(name.to_string()),
-            typ: typ,
+            typ,
             value: value.span.make_wrapped(Box::new(value.inner)),
         })
         .boxed()
@@ -770,10 +770,7 @@ pub fn decl<'src>() -> impl Parser<'src, &'src str, Decl, extra::Err<Rich<'src, 
                     annotations,
                     name: name.span.make_wrapped(name.inner.to_string()),
                     generics: vec![],
-                    params: match params {
-                        Some(params) => params,
-                        None => vec![],
-                    },
+                    params: params.unwrap_or_default(),
                     returns,
                     body,
                 })
@@ -791,10 +788,7 @@ pub fn decl<'src>() -> impl Parser<'src, &'src str, Decl, extra::Err<Rich<'src, 
             .map(|(((annotations, name), params), decls)| Decl::Class {
                 annotations,
                 name: name.span.make_wrapped(name.inner.to_string()),
-                params: match params {
-                    Some(params) => params,
-                    None => vec![],
-                },
+                params: params.unwrap_or_default(),
                 decls,
             });
         choice((var, function, class))
@@ -828,7 +822,7 @@ pub fn program<'src>() -> impl Parser<'src, &'src str, Program, extra::Err<Rich<
         .map(|(imports, decls)| Program { imports, decls })
 }
 
-pub fn parse<'src>(path: PathBuf) -> Option<Program> {
+pub fn parse(path: PathBuf) -> Option<Program> {
     let filename = path
         .clone()
         .file_name()
@@ -840,7 +834,7 @@ pub fn parse<'src>(path: PathBuf) -> Option<Program> {
     file.read_to_string(&mut src).unwrap();
     let (ast, errors) = program().parse(&src).into_output_errors();
 
-    if errors.len() > 0 {
+    if !errors.is_empty() {
         for err in errors {
             Report::build(
                 ReportKind::Error,

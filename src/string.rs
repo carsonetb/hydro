@@ -132,7 +132,7 @@ impl<'ctx> ValueStatic<'ctx> for Str<'ctx> {
 
         let obj_struct = llvm_ctx.opaque_struct_type("String");
         obj_struct.set_body(
-            &vec![
+            &[
                 ctx.types.int.as_basic_type_enum(),
                 ctx.types.ptr.as_basic_type_enum(),
             ],

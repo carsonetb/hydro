@@ -2,7 +2,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     fs::{File, write},
     io::Read,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command,
 };
 
@@ -141,11 +141,7 @@ fn foreign_function<'src>()
                 Spanned<String>,
             )| ForeignFunction {
                 name: name.span.make_wrapped(name.inner.to_string()),
-                params: if (params.is_some()) {
-                    params.unwrap()
-                } else {
-                    vec![]
-                },
+                params: params.unwrap_or_default(),
                 returns: returns.clone().map(|r| r.1),
                 returns_raw: returns.map(|r| r.0),
                 bound,
@@ -162,7 +158,7 @@ fn ffi_member<'src>() -> impl Parser<'src, &'src str, FFIMember, extra::Err<Rich
         .then_ignore(just(';').padded())
         .map(|((name, raw), typ)| FFIMember::Var { name, typ, raw })
         .boxed();
-    let function = foreign_function().map(|f| FFIMember::Function(f));
+    let function = foreign_function().map(FFIMember::Function);
     choice((var, function))
 }
 
@@ -178,7 +174,7 @@ fn ffi_decl<'src>() -> impl Parser<'src, &'src str, FFIDecl, extra::Err<Rich<'sr
                 .delimited_by(just("{").padded(), just("}").padded()),
         )
         .map(|(name, members)| FFIDecl::Class { name, members });
-    let function = foreign_function().map(|f| FFIDecl::Function(f));
+    let function = foreign_function().map(FFIDecl::Function);
     choice((function, class))
 }
 
@@ -219,7 +215,7 @@ fn map_to_bound(typ: String, raw: bool) -> String {
 pub fn compile_ffi<'ctx>(
     ctx: &mut LanguageContext<'ctx>,
     path: &Spanned<PathBuf>,
-    build: &PathBuf,
+    build: &Path,
 ) -> Result<(), CompileError> {
     let filename = path
         .clone()
@@ -232,7 +228,7 @@ pub fn compile_ffi<'ctx>(
     file.read_to_string(&mut src);
     let (ast, errors) = program().parse(&src).into_output_errors();
 
-    if errors.len() > 0 {
+    if !errors.is_empty() {
         for err in errors {
             Report::build(
                 ReportKind::Error,
@@ -372,18 +368,16 @@ pub fn compile_ffi<'ctx>(
                     .unwrap();
 
                 let mut class_members = BTreeMap::<String, ClassMember>::new();
-                let mut index = 0;
-                for member in &members {
+                for (index, member) in members.iter().enumerate() {
                     match member {
                         FFIMember::Var { name, typ, raw } => {
                             class_members.insert(
                                 name.inner.clone(),
-                                ClassMember::new(TypeID::from_base(&typ.inner), index),
+                                ClassMember::new(TypeID::from_base(&typ.inner), index as u32),
                             );
                         }
                         FFIMember::Function(foreign_function) => todo!(),
                     };
-                    index += 1;
                 }
 
                 let mut builder = MetatypeBuilder::new(

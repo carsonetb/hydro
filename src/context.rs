@@ -130,7 +130,7 @@ impl<'ctx> LanguageContext<'ctx> {
     pub fn validate_id(&self, id: TypeID) {
         self.metatypes
             .get(&id)
-            .expect(&format!("Could not validate that type {id} exists!"));
+            .unwrap_or_else(|| panic!("Could not validate that type {id} exists!"));
     }
 
     pub fn get_with_gen(
@@ -163,13 +163,13 @@ impl<'ctx> LanguageContext<'ctx> {
 
     pub fn get(&self, id: TypeID) -> &Metatype<'ctx> {
         self.maybe_get(id.clone())
-            .expect(format!("Cannot find type {id} or it is not fully initialized.").as_str())
+            .unwrap_or_else(|| panic!("Cannot find type {id} or it is not fully initialized."))
     }
 
     pub fn get_err(&self, id: Spanned<TypeID>) -> Result<&Metatype<'ctx>, CompileError> {
         let out = self.maybe_get(id.inner.clone());
-        if out.is_some() {
-            Ok(out.unwrap())
+        if let Some(out) = out {
+            Ok(out)
         } else {
             Err(CompileError::new(
                 id.span,
@@ -181,7 +181,7 @@ impl<'ctx> LanguageContext<'ctx> {
     pub fn maybe_get(&self, id: TypeID) -> Option<&Metatype<'ctx>> {
         self.metatypes
             .get(&id)
-            .expect(format!("Could not find type {id}").as_str())
+            .unwrap_or_else(|| panic!("Could not find type {id}"))
             .as_ref()
     }
 
@@ -366,7 +366,7 @@ impl<'ctx> LLVMTypes<'ctx> {
     pub fn new(context: &'ctx Context) -> Self {
         let type_struct = context.opaque_struct_type("Type");
 
-        let out = Self {
+        Self {
             type_struct,
             bool: context.bool_type(),
             char: context.i8_type(),
@@ -378,9 +378,7 @@ impl<'ctx> LLVMTypes<'ctx> {
             double: context.f64_type(),
             ptr: context.ptr_type(AddressSpace::from(0u16)),
             void: context.void_type(),
-        };
-
-        out
+        }
     }
 
     pub fn int_enum(&self) -> BasicTypeEnum<'ctx> {
