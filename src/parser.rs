@@ -621,7 +621,7 @@ pub fn match_parser<'src>(
             primary(expr.clone())
                 .then_ignore(just("->").padded())
                 .then(expr)
-                .then_ignore(just(";").padded())
+                .then_ignore(newline().or(just(";").padded().ignored()))
                 .repeated()
                 .collect::<Vec<_>>()
                 .delimited_by(just("{").padded(), just("}").padded()),
@@ -703,10 +703,10 @@ pub fn stmt<'src>(
         expr.map(|expression| Stmt::Expr(expression.span.make_wrapped(Box::new(expression.inner))));
 
     let recovery = via_parser(
-        none_of(";}")
+        none_of(";}\n")
             .repeated()
             .at_least(1)
-            .then_ignore(just(";").padded())
+            .then_ignore(newline().or(just(";").padded().ignored()))
             .map(|_| Stmt::Error(ErrorKind::Unknown)),
     );
 
@@ -718,9 +718,11 @@ pub fn stmt<'src>(
         ret,
         set_stmt,
         just_expr,
+        if_stmt,
+        for_stmt,
+        match_stmt,
+        while_stmt,
     ))
-    .then_ignore(just(";").padded())
-    .or(choice((if_stmt, for_stmt, match_stmt, while_stmt)))
     .recover_with(recovery)
     .then_ignore(comment())
     .labelled("statement")
@@ -755,8 +757,8 @@ pub fn params<'src>()
 pub fn decl<'src>() -> impl Parser<'src, &'src str, Decl, extra::Err<Rich<'src, char>>> + Clone {
     recursive(|decl| {
         let var = var(expr(block()), block())
-            .map(Decl::Var)
-            .then_ignore(just(";").padded());
+            .then_ignore(newline().padded().or(just(";").padded().ignored()).or_not())
+            .map(Decl::Var);
         let function = annotations()
             .then_ignore(text::keyword("fn").padded())
             .then(text::ident().spanned().padded()) // TODO: Function generic params.
@@ -812,7 +814,7 @@ pub fn import<'src>() -> impl Parser<'src, &'src str, Spanned<Import>, extra::Er
                 .separated_by(just('.').padded())
                 .collect(),
         )
-        .then_ignore(just(';').padded())
+        .then_ignore(newline().or(just(";").padded().ignored()))
         .map(|path| Import { path })
         .spanned()
 }
