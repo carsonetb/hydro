@@ -3,7 +3,10 @@ use std::{
     fmt::Display,
 };
 
-use chumsky::span::{SimpleSpan, Span, Spanned, WrappingSpan};
+use chumsky::{
+    Parser,
+    span::{SimpleSpan, Span, Spanned, WrappingSpan},
+};
 use inkwell::{
     basic_block::BasicBlock,
     context::Context,
@@ -16,6 +19,7 @@ use crate::{
     classes::{ClassInfo, ClassMember},
     codegen::CompileError,
     context::LanguageContext,
+    parser::type_parser,
     value::{Field, Value, ValueEnum, ValueRef, ValueStatic, any_to_basic},
 };
 
@@ -53,6 +57,10 @@ impl TypeID {
             base: base.to_string(),
             generics: Vec::<TypeID>::new(),
         }
+    }
+
+    pub fn from_string(string: &str) -> Self {
+        type_parser().parse(string).unwrap().to_typeid()
     }
 
     pub fn name(&self) -> String {

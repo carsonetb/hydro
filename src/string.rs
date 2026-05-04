@@ -56,19 +56,25 @@ impl<'ctx> Value<'ctx> for Str<'ctx> {
         name: Spanned<String>,
         into: &str,
     ) -> Result<ValueEnum<'ctx>, CompileError> {
+        let cmp_type = TypeID::from_string("(String, String) -> Bool");
         match &name.inner[..] {
             "+" => Ok(ValueEnum::Function(Function::new(
                 ctx,
-                ctx.module
-                    .get_function("String__concat")
-                    .unwrap()
-                    .as_global_value()
-                    .as_pointer_value(),
-                function_type(
-                    vec![TypeID::from_base("String"); 2],
-                    TypeID::from_base("String"),
-                ),
+                ctx.fn_pointer("String__concat"),
+                TypeID::from_string("(String, String) -> String"),
                 "+",
+            ))),
+            "==" => Ok(ValueEnum::Function(Function::new(
+                ctx,
+                ctx.fn_pointer("String__eq"),
+                cmp_type,
+                "==",
+            ))),
+            "!=" => Ok(ValueEnum::Function(Function::new(
+                ctx,
+                ctx.fn_pointer("String__neq"),
+                cmp_type,
+                "!=",
             ))),
             _ => Err(CompileError::new(
                 name.span,

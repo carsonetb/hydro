@@ -68,35 +68,18 @@ impl<'ctx> Value<'ctx> for Int<'ctx> {
         name: Spanned<String>,
         into: &str,
     ) -> Result<ValueEnum<'ctx>, CompileError> {
-        let bin_type = TypeID::new(
-            "Function",
-            vec![
-                TypeID::new("Tuple", vec![TypeID::from_base("Int"); 2]),
-                TypeID::from_base("Int"),
-            ],
-        );
+        let bin_type = TypeID::from_string("(Int, Int) -> Int");
         let mut cmp_type = bin_type.clone();
         cmp_type.generics[1] = TypeID::from_base("Bool");
 
         let int_type = TypeID::from_base("Int");
-        let to_string_type = TypeID::new(
-            "MemberFunction",
-            vec![
-                int_type.clone(),
-                TypeID::new("Tuple", vec![]),
-                TypeID::from_base("String"),
-            ],
-        );
+        let to_string_type = TypeID::from_string("(Int)() -> String");
 
         macro_rules! op_fun_wrapper {
             ($op_name:expr, $fn_name:expr, $ty:expr) => {
                 Ok(ValueEnum::Function(Function::new(
                     ctx,
-                    ctx.module
-                        .get_function($fn_name)
-                        .unwrap()
-                        .as_global_value()
-                        .as_pointer_value(),
+                    ctx.fn_pointer($fn_name),
                     $ty,
                     $op_name,
                 )))

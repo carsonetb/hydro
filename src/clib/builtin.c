@@ -62,6 +62,14 @@ String *String__concat(String* this, String* other) {
     return dest;
 }
 
+int String__eq(String* this, String* other) {
+    return strcmp(this->val, other->val) == 0;
+}
+
+int String__neq(String* this, String* other) {
+    return strcmp(this->val, other->val) != 0;
+}
+
 const char *String__to_cstr(String *from) { return from->val; }
 
 Vector *Vector__new(size_t type_size, size_t capacity) {

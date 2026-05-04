@@ -286,6 +286,14 @@ impl<'ctx> LanguageContext<'ctx> {
         ))
     }
 
+    pub fn fn_pointer(&self, name: &str) -> PointerValue<'ctx> {
+        self.module
+            .get_function(name)
+            .unwrap()
+            .as_global_value()
+            .as_pointer_value()
+    }
+
     pub fn add_function(&self, name: &str, typ: FunctionType<'ctx>) -> FunctionValue<'ctx> {
         self.module.add_function(name, typ, None)
     }

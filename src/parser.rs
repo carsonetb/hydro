@@ -253,21 +253,76 @@ pub fn type_parser<'src>() -> impl GenericParser<'src, ParserType> + Clone {
             .map(|name: Spanned<&str>| name.span.make_wrapped(name.inner.to_string()));
 
         let args: Boxed<'_, '_, &str, Spanned<Vec<ParserType>>, Err<Rich<'src, char>>> = typ
+            .clone()
             .separated_by(just(',').padded())
             .collect::<Vec<_>>()
             .delimited_by(just('<'), just('>'))
             .spanned()
             .boxed();
 
-        ident
+        let normal = ident
             .then(args.or_not())
             .map(|(base, generics)| match generics {
                 Some(generics) => {
                     ParserType::new(base.span.union(generics.span), base, generics.inner)
                 }
                 None => ParserType::from_base(base),
-            })
-            .labelled("type")
+            });
+
+        let tuple = typ
+            .clone()
+            .separated_by(just(',').padded())
+            .collect()
+            .delimited_by(just('('), just(')'))
+            .spanned()
+            .boxed()
+            .map(|generics| {
+                ParserType::new(
+                    generics.span,
+                    generics.span.make_wrapped("Tuple".to_string()),
+                    generics.inner,
+                )
+            });
+
+        let function = tuple
+            .clone()
+            .then_ignore(just("->").padded())
+            .then(typ.clone())
+            .spanned()
+            .map(
+                |Spanned {
+                     inner: (params, ret),
+                     span,
+                 }| {
+                    ParserType::new(
+                        span,
+                        span.make_wrapped("Function".to_string()),
+                        vec![params, ret],
+                    )
+                },
+            );
+
+        let member_function = typ
+            .clone()
+            .delimited_by(just('(').padded(), just(')').padded())
+            .then(tuple.clone())
+            .then_ignore(just("->").padded())
+            .then(typ.clone())
+            .spanned()
+            .map(
+                |Spanned {
+                     inner: ((on, params), ret),
+                     span,
+                 }| {
+                    ParserType::new(
+                        span,
+                        span.make_wrapped("MemberFunction".to_string()),
+                        vec![on, params, ret],
+                    )
+                },
+            );
+
+        choice((member_function, normal, function, tuple)).labelled("type")
     })
 }
 
