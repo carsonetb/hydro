@@ -310,8 +310,7 @@ impl<'ctx> MetatypeBuilder<'ctx> {
         static_struct.set_body(&internals, false);
         let mut i = 0;
         let mut static_values = Vec::<BasicValueEnum<'ctx>>::new();
-        while !self.static_values.is_empty() {
-            let val = self.static_values.pop().unwrap();
+        while let Some(val) = self.static_values.pop() {
             static_values.push(val.val.get_value());
 
             members.insert(
@@ -378,7 +377,7 @@ impl<'ctx> ClassBuilder<'ctx> {
     pub fn new(
         ctx: &mut LanguageContext<'ctx>,
         name: &str,
-        params: &Vec<(Spanned<String>, TypeID)>,
+        params: &[(Spanned<String>, TypeID)],
     ) -> Self {
         let mut builder = MetatypeBuilder::new(
             ctx,
@@ -414,7 +413,7 @@ impl<'ctx> ClassBuilder<'ctx> {
 
         let mut out = Self {
             old_block,
-            class_struct: class_struct,
+            class_struct,
             init_llvm: init_llvm_fn,
             body: vec![],
             static_body: vec![],
@@ -440,7 +439,7 @@ impl<'ctx> ClassBuilder<'ctx> {
 
         let mem = ctx.build_gc_malloc(self.class_struct.size_of().unwrap(), "out");
         for MemberDefault { value, index, name } in &self.default_members {
-            ctx.build_ptr_store(self.class_struct, mem, *value, *index, &name);
+            ctx.build_ptr_store(self.class_struct, mem, *value, *index, name);
         }
 
         if self.functions.contains_key("init") {
@@ -459,11 +458,11 @@ impl<'ctx> ClassBuilder<'ctx> {
         self.builder.build(ctx.context, ctx, vec![]);
     }
 
-    pub fn add_member(&mut self, name: &String, value: &ValueEnum<'ctx>) {
+    pub fn add_member(&mut self, name: &str, value: &ValueEnum<'ctx>) {
         // TODO: Check if init function and validate.
         match value {
             ValueEnum::Function(function) => {
-                self.functions.insert(name.clone(), function.clone());
+                self.functions.insert(name.to_string(), function.clone());
             }
             _ => {
                 let llvm_value = value.get_value();
@@ -471,10 +470,10 @@ impl<'ctx> ClassBuilder<'ctx> {
                 self.default_members.push(MemberDefault {
                     value: llvm_value,
                     index: self.member_index,
-                    name: name.clone(),
+                    name: name.to_string(),
                 });
                 self.members.insert(
-                    name.clone(),
+                    name.to_string(),
                     ClassMember::new(value.get_type(), self.member_index),
                 );
                 self.member_index += 1;

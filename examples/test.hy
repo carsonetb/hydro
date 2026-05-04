@@ -1,13 +1,12 @@
+class Test {
+    var x = 1
+
+    fn add -> Int {
+        return x + 1
+    }
+}
 
 fn main() {
-    print(1.to_string());
-    print("x" + "y");
-    var text = if 1.05 == 1.04 {
-        eval "true";
-    } elif 1.05 == 1.05 {
-        eval "false";
-    } else {
-        eval "none";
-    };
-    print(text);
+    var text = input("Name? ")
+    print("Hi, %s".format([text]))
 }

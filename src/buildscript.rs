@@ -3,7 +3,7 @@ use std::{
     env::{self, consts::OS},
     fs::File,
     io::Read,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command,
 };
 
@@ -27,10 +27,10 @@ pub struct LinkInfo {
 
 impl LinkInfo {
     pub fn empty() -> LinkInfo {
-        return LinkInfo {
+        LinkInfo {
             linkdirs: vec![],
             links: vec![],
-        };
+        }
     }
 
     pub fn merge(&self, other: LinkInfo) -> LinkInfo {
@@ -86,7 +86,7 @@ fn build_cmd<'src>() -> impl Parser<'src, &'src str, BuildCmd, extra::Err<Rich<'
         .padded()
         .ignore_then(string())
         .then_ignore(newline())
-        .map(|path| BuildCmd::Artifact(path))
+        .map(BuildCmd::Artifact)
         .boxed();
     let run = keyword("run")
         .padded()
@@ -98,12 +98,12 @@ fn build_cmd<'src>() -> impl Parser<'src, &'src str, BuildCmd, extra::Err<Rich<'
         .padded()
         .ignore_then(string().separated_by(just(",")).collect())
         .then_ignore(newline())
-        .map(|dirs| BuildCmd::LinkDir(dirs));
+        .map(BuildCmd::LinkDir);
     let link = keyword("link")
         .padded()
         .ignore_then(string().separated_by(just(",").padded()).collect())
         .then_ignore(newline())
-        .map(|dirs| BuildCmd::Link(dirs));
+        .map(BuildCmd::Link);
     choice((artifact, run, linkdir, link)).boxed()
 }
 
@@ -119,7 +119,7 @@ fn target<'src>() -> impl Parser<'src, &'src str, Target, extra::Err<Rich<'src, 
         )
         .map(|(target, commands)| Target {
             target: target.span.make_wrapped(target.to_string()),
-            commands: commands,
+            commands,
         })
 }
 
@@ -143,7 +143,7 @@ fn check_paths_exist(paths: &Vec<PathBuf>) -> bool {
     all_exists
 }
 
-pub fn run_buildscript(path: &Spanned<PathBuf>, build: &PathBuf) -> Result<LinkInfo, CompileError> {
+pub fn run_buildscript(path: &Spanned<PathBuf>, build: &Path) -> Result<LinkInfo, CompileError> {
     let filename = path
         .clone()
         .file_name()
@@ -155,7 +155,7 @@ pub fn run_buildscript(path: &Spanned<PathBuf>, build: &PathBuf) -> Result<LinkI
     file.read_to_string(&mut src);
     let (ast, errors) = script().parse(&src).into_output_errors();
 
-    if errors.len() > 0 {
+    if !errors.is_empty() {
         for err in errors {
             Report::build(
                 ReportKind::Error,
@@ -188,7 +188,7 @@ pub fn run_buildscript(path: &Spanned<PathBuf>, build: &PathBuf) -> Result<LinkI
             clone_dir.to_str().unwrap()
         );
         Command::new("git")
-            .args(["clone", &ast.source.inner, &clone_dir.to_str().unwrap()])
+            .args(["clone", &ast.source.inner, clone_dir.to_str().unwrap()])
             .status()
             .unwrap();
     }
@@ -216,19 +216,17 @@ pub fn run_buildscript(path: &Spanned<PathBuf>, build: &PathBuf) -> Result<LinkI
             BuildCmd::Artifact(artifact) => artifacts.push(clone_dir.join(artifact.inner)),
             BuildCmd::Run { cmd, inside } => {
                 let mut command = Command::new("sh");
-                if inside.is_some() {
-                    command.current_dir(clone_dir.join(inside.unwrap().inner));
+                if let Some(inside) = inside {
+                    command.current_dir(clone_dir.join(inside.inner));
                 } else {
                     command.current_dir(&clone_dir);
                 }
-                commands.push(Box::new(
-                    (move || {
-                        command
-                            .args(["-c", cmd.inner.as_str()])
-                            .status()
-                            .expect(&format!("Failed to run build command: {:?}", command));
-                    }),
-                ));
+                commands.push(Box::new(move || {
+                    command
+                        .args(["-c", cmd.inner.as_str()])
+                        .status()
+                        .unwrap_or_else(|_| panic!("Failed to run build command: {:?}", command));
+                }));
             }
             BuildCmd::LinkDir(dirs) => {
                 for dir in dirs {

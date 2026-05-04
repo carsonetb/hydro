@@ -24,12 +24,14 @@ impl<'ctx> Vector<'ctx> {
     pub fn new(ctx: &LanguageContext<'ctx>, typ: TypeID, name: &str) -> Self {
         assert!(typ.generics.len() == 1);
         let new_fn = ctx.module.get_function("Vector__new").unwrap();
+        let contains_type = ctx.get(typ.generics[0].clone());
         let ptr = ctx
             .build_call_returns(
                 new_fn,
                 &[
-                    ctx.get(typ.generics[0].clone())
-                        .storage_type
+                    contains_type
+                        .obj_struct
+                        .map_or(contains_type.storage_type, |s| s.into())
                         .size_of()
                         .unwrap()
                         .into(),

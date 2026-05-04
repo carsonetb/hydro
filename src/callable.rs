@@ -34,22 +34,20 @@ pub trait Callable<'ctx> {
         args: &Vec<ValueEnum<'ctx>>,
         into_name: &str,
     ) -> Result<ValueEnum<'ctx>, String> {
-        let arg_ptrs: Vec<BasicMetadataValueEnum<'ctx>> = args
-            .into_iter()
-            .map(|arg| BasicMetadataValueEnum::try_from(arg.get_value()).unwrap())
-            .collect();
+        let arg_ptrs: Vec<BasicMetadataValueEnum<'ctx>> =
+            args.iter().map(|arg| arg.get_value().into()).collect();
         let params: Vec<BasicMetadataTypeEnum<'ctx>> = args
-            .into_iter()
+            .iter()
             .map(|a| ctx.get_storage(a.get_type()).into())
             .collect();
         let fn_type = ctx.get_storage(self.returns()).fn_type(&params, false);
         let result = ctx
             .builder
-            .build_indirect_call(fn_type, fn_ptr, &arg_ptrs, &into_name)
+            .build_indirect_call(fn_type, fn_ptr, &arg_ptrs, into_name)
             .unwrap()
             .try_as_basic_value();
 
-        Ok(if self.returns().base != "Unit".to_string() {
+        Ok(if self.returns().base != "Unit" {
             ValueEnum::from_val(
                 ctx,
                 result.expect_basic("Function return type is not a value?"),
@@ -81,7 +79,7 @@ impl<'ctx> Function<'ctx> {
         name: &str,
     ) -> Self {
         assert!(typ.generics.len() == 2);
-        assert!(typ.generics[0].base == "Tuple".to_string());
+        assert!(typ.generics[0].base == "Tuple");
         Self {
             name: name.to_string(),
             metatype: typ,
@@ -99,7 +97,7 @@ impl<'ctx> Function<'ctx> {
             ctx,
             fn_val.as_global_value().as_pointer_value(),
             typ,
-            &fn_val.get_name().to_str().unwrap().to_owned(),
+            fn_val.get_name().to_str().unwrap(),
         )
     }
 
@@ -170,7 +168,7 @@ impl<'ctx> Value<'ctx> for Function<'ctx> {
     ) -> Result<ValueEnum<'ctx>, CompileError> {
         Err(CompileError::new(
             name.span,
-            &format!("Function types have no members!"),
+            "Function types have no members!",
         ))
     }
 
@@ -266,7 +264,7 @@ impl<'ctx> MemberFunction<'ctx> {
         name: &str,
     ) -> Self {
         assert!(typ.generics.len() == 3);
-        assert!(typ.generics[1].base == "Tuple".to_string());
+        assert!(typ.generics[1].base == "Tuple");
 
         Self {
             name: name.to_string(),
@@ -361,7 +359,7 @@ impl<'ctx> Value<'ctx> for MemberFunction<'ctx> {
     ) -> Result<ValueEnum<'ctx>, CompileError> {
         Err(CompileError::new(
             name.span,
-            &format!("Function types have no members!"),
+            "Function types have no members!",
         ))
     }
 

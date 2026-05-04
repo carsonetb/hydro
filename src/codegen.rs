@@ -105,7 +105,7 @@ fn gen_atom<'ctx>(
         Atom::Grouping(expr) => gen_expr(ctx, info, expr, into_name),
         Atom::Var(name) => ctx.get_field(name.clone()).map(|val| val.value.clone()),
         Atom::Array(exprs) => {
-            if exprs.len() == 0 {
+            if exprs.is_empty() {
                 return Err(CompileError::new(
                     exprs.span,
                     "Cannot (currently) infer type of an empty array.",
@@ -136,9 +136,9 @@ fn gen_atom<'ctx>(
         }
         Atom::Block(stmts) => match gen_stmts(ctx, stmts, info, into_name)? {
             StmtEval::Eval { 0: name, 1: value } => {
-                if name.is_some() {
+                if let Some(name) = name {
                     return Err(CompileError::new(
-                        name.unwrap().span,
+                        name.span,
                         "No higher order statement to jump to (this is a block).",
                     ));
                 };
@@ -283,10 +283,10 @@ fn gen_expr<'ctx>(
                 .unwrap();
             op_fn.verify(vec![left_type, right_type]);
             Ok(op_fn
-                .call(ctx, vec![left_val, right_val], &into_name)
+                .call(ctx, vec![left_val, right_val], into_name)
                 .map_err(|err| CompileError::new(op.span, &err)))?
         }
-        Expr::Primary(primary) => gen_primary(ctx, info, primary, &into_name),
+        Expr::Primary(primary) => gen_primary(ctx, info, primary, into_name),
         Expr::Var(var) => todo!(),
         Expr::Set(set) => todo!(),
         Expr::If(if_stmt) => {
@@ -411,7 +411,7 @@ fn gen_if<'ctx>(
 
     let mut elifs = elifs.clone();
 
-    if elifs.len() > 0 {
+    if !elifs.is_empty() {
         let (name, cond, then) = elifs.remove(0);
         let elif_returns = gen_if(
             ctx,
@@ -491,11 +491,7 @@ fn gen_var_decl<'ctx>(
     typ: &Option<ParserType>,
     value: &Spanned<Box<Expr>>,
 ) -> Result<StmtEval<'ctx>, CompileError> {
-    let eval = gen_expr(ctx, info, value.as_ref(), &name.inner);
-    if eval.is_err() {
-        return Err(eval.unwrap_err());
-    }
-    let eval = eval.unwrap();
+    let eval = gen_expr(ctx, info, value.as_ref(), &name.inner)?;
     let eval_type = eval.get_type().name();
     if typ.is_some() && eval_type != typ.as_ref().unwrap().to_typeid().name() {
         return Err(CompileError::with_notes(
@@ -668,15 +664,15 @@ fn gen_stmt<'ctx>(
                 expr.span.make_wrapped(ValueEnum::Unit(Unit {})),
             )),
         },
-        Stmt::Eval(Eval { from: name, val }) => Ok(StmtEval::Eval {
-            0: name.clone(),
-            1: match &val.inner {
+        Stmt::Eval(Eval { from: name, val }) => Ok(StmtEval::Eval(
+            name.clone(),
+            match &val.inner {
                 Some(val) => val
                     .span
                     .make_wrapped(gen_expr(ctx, info, &val.inner, into_name)?),
                 None => val.span.make_wrapped(ValueEnum::Unit(Unit {})),
             },
-        }),
+        )),
         Stmt::Break(Break(name)) => Ok(StmtEval::Break(name.clone())),
         Stmt::Continue(Continue(name)) => Ok(StmtEval::Continue(name.clone())),
     }
@@ -684,7 +680,7 @@ fn gen_stmt<'ctx>(
 
 fn gen_stmts<'ctx>(
     ctx: &mut LanguageContext<'ctx>,
-    stmts: &Vec<Spanned<Stmt>>,
+    stmts: &[Spanned<Stmt>],
     info: &FunctionInfo<'ctx>,
     into_name: &str,
 ) -> Result<StmtEval<'ctx>, CompileError> {
@@ -706,7 +702,7 @@ fn gen_stmts<'ctx>(
                     }
                     return Err(out);
                 }
-                let ret_value: Option<&dyn BasicValue<'ctx>> = if ret.inner.is_unit() {
+                let ret_value: Option<&dyn BasicValue<'ctx>> = if !ret.inner.is_unit() {
                     Some(&ret.get_value())
                 } else {
                     None
@@ -797,7 +793,7 @@ pub fn gen_decl_pre<'ctx>(
             let function_type =
                 TypeID::new("Function", vec![params_typeid, returns_typeid.clone()]);
             let function = Function::from_function(llvm_ctx, ctx, llvm_function, function_type);
-            ctx.add_field(&name, Field::new(ValueEnum::Function(function), &name));
+            ctx.add_field(name, Field::new(ValueEnum::Function(function), name));
 
             Ok(())
         }
@@ -870,7 +866,7 @@ pub fn gen_decl<'ctx>(
                 ctx,
                 &body.inner,
                 &FunctionInfo {
-                    function: function,
+                    function,
                     returns: returns.clone(),
                     returns_spanned: returns_spanned.clone(),
                 },
@@ -907,16 +903,13 @@ pub fn gen_decl<'ctx>(
                 &params
                     .iter()
                     .map(|(name, typ)| (name.clone(), typ.to_typeid()))
-                    .collect(),
+                    .collect::<Vec<_>>(),
             );
 
             let mut functions: Vec<&FunctionDecl> = vec![];
             for decl in decls {
-                match decl {
-                    Decl::Function(function_decl) => {
-                        functions.push(function_decl);
-                    }
-                    _ => (),
+                if let Decl::Function(function_decl) = decl {
+                    functions.push(function_decl);
                 }
             }
 
@@ -927,7 +920,7 @@ pub fn gen_decl<'ctx>(
                 builder.add_member(name, &field.value);
             }
 
-            let mut functions_decls = ctx.pop_scope();
+            ctx.pop_scope();
 
             builder.build(ctx);
 
@@ -951,10 +944,10 @@ pub fn gen_decl<'ctx>(
                         member.typ.clone(),
                         obj,
                         member.index,
-                        &name,
+                        name,
                     );
-                    let value = ValueEnum::from_val(ctx, value, member.typ.clone(), &name);
-                    ctx.add_field(&name, Field::new(value, &name));
+                    let value = ValueEnum::from_val(ctx, value, member.typ.clone(), name);
+                    ctx.add_field(name, Field::new(value, name));
                 }
                 // TODO: add member functions
                 for ((name, typ), value) in params.iter().zip(function_val.get_params()).skip(1) {
@@ -997,7 +990,7 @@ pub fn gen_decl<'ctx>(
 
 pub fn gen_decls_pre<'ctx>(
     ctx: &mut LanguageContext<'ctx>,
-    decls: &Vec<Decl>,
+    decls: &[Decl],
     inside: Option<TypeID>,
     init_fn: FunctionValue<'ctx>,
 ) {
@@ -1009,7 +1002,7 @@ pub fn gen_decls_pre<'ctx>(
     }
 }
 
-pub fn gen_decls<'ctx>(ctx: &mut LanguageContext<'ctx>, decls: &Vec<Decl>) {
+pub fn gen_decls<'ctx>(ctx: &mut LanguageContext<'ctx>, decls: &[Decl]) {
     for decl in decls.iter() {
         match gen_decl(ctx.context, ctx, decl) {
             Ok(_) => continue,
@@ -1023,8 +1016,8 @@ pub fn do_codegen<'ctx>(
     ctx: &mut LanguageContext<'ctx>,
     path: PathBuf,
     program: Program,
-    source: &PathBuf,
-    build: &PathBuf,
+    source: &Path,
+    build: &Path,
     main: FunctionValue<'ctx>,
 ) -> Result<LinkInfo, ()> {
     let filename = path
@@ -1039,11 +1032,11 @@ pub fn do_codegen<'ctx>(
 
     ctx.push_scope();
 
-    ctx.init_metatypes(&llvm_ctx);
+    ctx.init_metatypes(llvm_ctx);
 
     let mut link_info = LinkInfo::empty();
     for import in program.imports {
-        let mut path = source.clone();
+        let mut path = source.to_path_buf();
         for name in import.inner.path {
             path = path.join(name.inner);
         }
@@ -1116,7 +1109,7 @@ pub fn do_codegen<'ctx>(
             .unwrap();
     }
 
-    if ctx.errors.len() > 0 {
+    if !ctx.errors.is_empty() {
         Err(())
     } else {
         Ok(link_info)
